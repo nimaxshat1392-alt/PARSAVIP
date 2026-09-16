@@ -26,9 +26,7 @@ class VpnService {
       _status == VpnStatus.connecting ||
       _status == VpnStatus.disconnecting;
 
-  Future<void> initialize() async {
-    // placeholder — بعداً Sing-box اینجا مقداردهی می‌شود
-  }
+  Future<void> initialize() async {}
 
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
