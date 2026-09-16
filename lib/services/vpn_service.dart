@@ -1,22 +1,22 @@
 import 'dart:async';
-import 'package:flutter_singbox_client/flutter_singbox_client.dart';
 import '../models/vpn_config.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
-  final SingboxClient _client = SingboxClient();
-  bool _initialized = false;
-
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
+  String? _lastError;
+
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
+
   Timer? _timer;
   Duration _duration = Duration.zero;
 
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
+  String? get lastError => _lastError;
   Stream<VpnStatus> get statusStream => _statusCtrl.stream;
   Stream<Duration> get durationStream => _durationCtrl.stream;
   Duration get duration => _duration;
@@ -26,62 +26,33 @@ class VpnService {
       _status == VpnStatus.connecting ||
       _status == VpnStatus.disconnecting;
 
-  /// یک بار در زمان راه‌اندازی برنامه فراخوانی می‌شود
   Future<void> initialize() async {
-    if (_initialized) return;
-    await _client.initialize();
-    _initialized = true;
+    // placeholder — بعداً Sing-box اینجا مقداردهی می‌شود
   }
 
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
-    if (!_initialized) await initialize();
 
     _status = VpnStatus.connecting;
     _statusCtrl.add(_status);
     _current = config;
 
-    try {
-      // ۱. اعتبارسنجی کانفیگ با هسته Sing-box
-      await _client.checkConfig(config.rawUri);
+    await Future.delayed(const Duration(milliseconds: 1200));
 
-      // ۲. درخواست مجوز VPN (فقط بار اول نمایش داده می‌شود)
-      final permissionGranted = await _client.requestVPNPermission();
-      if (!permissionGranted) {
-        _status = VpnStatus.error;
-        _statusCtrl.add(_status);
-        return false;
-      }
-
-      // ۳. اتصال با تنظیمات کامل
-      await _client.connect(SessionOptions(
-        config: config.rawUri,
-        networkMode: NetworkMode.vpn,
-        killSwitch: false, // در صورت نیاز true کنید
-        notification: const NotificationConfig(
-          title: 'PARSAVIP',
-          showTrafficStats: true,
-        ),
-      ));
-
-      _status = VpnStatus.connected;
-      _statusCtrl.add(_status);
-      _startTimer();
-      return true;
-    } catch (e) {
-      _status = VpnStatus.error;
-      _statusCtrl.add(_status);
-      return false;
-    }
+    _status = VpnStatus.connected;
+    _statusCtrl.add(_status);
+    _startTimer();
+    return true;
   }
 
   Future<void> disconnect() async {
     if (!isConnected) return;
+
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
-    try {
-      await _client.disconnect();
-    } catch (_) {}
+
+    await Future.delayed(const Duration(milliseconds: 500));
+
     _status = VpnStatus.disconnected;
     _current = null;
     _stopTimer();
