@@ -1,13 +1,15 @@
 name: Fix and Build PARSAVIP
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  fix:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -32,22 +34,35 @@ jobs:
       - name: Backup pubspec
         run: cp pubspec.yaml pubspec_backup.yaml
 
-      - name: Generate platform folders
+      - name: Generate android folder
         run: |
-          rm -rf android ios web linux macos windows
+          rm -rf android
           flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
           rm -rf test
 
       - name: Restore pubspec
         run: mv pubspec_backup.yaml pubspec.yaml
 
-      - name: Commit generated files
+      - name: Patch Kotlin version in settings.gradle
+        run: |
+          SETTINGS=android/settings.gradle
+          sed -i 's/org.jetbrains.kotlin.android" version "[^"]*"/org.jetbrains.kotlin.android" version "1.9.24"/' $SETTINGS
+          cat $SETTINGS
+
+      - name: Patch Kotlin version in app/build.gradle
+        run: |
+          FILE=android/app/build.gradle
+          if ! grep -q "kotlinOptions" $FILE; then
+            sed -i '/android {/a \    kotlinOptions {\n        jvmTarget = "17"\n    }' $FILE
+          fi
+          cat $FILE
+
+      - name: Commit android folder
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add android/
-          git add .metadata || true
-          git commit -m "Auto-generate android folder" || echo "Nothing to commit"
+          git commit -m "Auto-fix android + kotlin" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
