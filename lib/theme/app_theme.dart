@@ -29,16 +29,11 @@ class C {
 
   static Color protoColor(String p) {
     switch (p.toLowerCase()) {
-      case 'ss':
-        return const Color(0xFF2196F3);
-      case 'vless':
-        return const Color(0xFF9C27B0);
-      case 'vmess':
-        return const Color(0xFFFF9800);
-      case 'trojan':
-        return const Color(0xFF4CAF50);
-      default:
-        return textSecondary;
+      case 'ss': return const Color(0xFF2196F3);
+      case 'vless': return const Color(0xFF9C27B0);
+      case 'vmess': return const Color(0xFFFF9800);
+      case 'trojan': return const Color(0xFF4CAF50);
+      default: return textSecondary;
     }
   }
 }
@@ -50,68 +45,44 @@ class AppTheme {
     return base.copyWith(
       scaffoldBackgroundColor: C.bgDark,
       colorScheme: const ColorScheme.dark(
-        primary: C.primary,
-        secondary: C.secondary,
-        surface: C.bgCard,
-        error: C.danger,
+        primary: C.primary, secondary: C.secondary,
+        surface: C.bgCard, error: C.danger,
       ),
       textTheme: GoogleFonts.vazirmatnTextTheme(base.textTheme).apply(
-        bodyColor: C.textPrimary,
-        displayColor: C.textPrimary,
+        bodyColor: C.textPrimary, displayColor: C.textPrimary,
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
+        backgroundColor: Colors.transparent, elevation: 0, centerTitle: true,
         iconTheme: const IconThemeData(color: C.textPrimary),
         titleTextStyle: GoogleFonts.vazirmatn(
-          fontSize: 18,
-          fontWeight: FontWeight.w800,
-          color: C.textPrimary,
-          letterSpacing: 1,
+          fontSize: 18, fontWeight: FontWeight.w800,
+          color: C.textPrimary, letterSpacing: 1,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: C.primary,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          backgroundColor: C.primary, foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: C.bgCardLight,
+        filled: true, fillColor: C.bgCardLight,
         hintStyle: const TextStyle(color: C.textHint),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
+          borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none,
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: C.secondary, width: 1.5),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: C.bgCardLight,
         contentTextStyle: GoogleFonts.vazirmatn(color: Colors.white),
         behavior: SnackBarBehavior.floating,
       ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: C.bgCard,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        titleTextStyle: GoogleFonts.vazirmatn(
-          fontWeight: FontWeight.w800,
-          fontSize: 18,
-          color: C.textPrimary,
-        ),
-      ),
     );
   }
-} 
+}

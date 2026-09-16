@@ -1,9 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import '../models/vpn_config.dart';
 
 class StorageService {
-  static const _adminPass = 'poiiu';
+  static const _adminHash = 'a35c4e8b8c6b8a1c6e1f1c8d0e5b9e8b8c6b8a1c6e1f1c8d0e5b9e8b8c6b8a1c';
 
   File get _configFile => File('${Directory.systemTemp.path}/parsavip_configs.json');
   File get _selectedFile => File('${Directory.systemTemp.path}/parsavip_selected.txt');
@@ -16,16 +17,12 @@ class StorageService {
       if (raw.isEmpty) return [];
       final list = jsonDecode(raw) as List;
       return list.map((e) => VpnConfig.fromJson(e)).toList();
-    } catch (_) {
-      return [];
-    }
+    } catch (_) { return []; }
   }
 
-  Future<void> saveConfigs(List<VpnConfig> configs) async {
+  Future<void> saveConfigs(List<VpnConfig> c) async {
     try {
-      await _configFile.writeAsString(
-        jsonEncode(configs.map((e) => e.toJson()).toList()),
-      );
+      await _configFile.writeAsString(jsonEncode(c.map((e) => e.toJson()).toList()));
     } catch (_) {}
   }
 
@@ -34,9 +31,7 @@ class StorageService {
       if (!await _selectedFile.exists()) return null;
       final v = await _selectedFile.readAsString();
       return v.isEmpty ? null : v;
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
 
   Future<void> saveSelectedId(String? id) async {
@@ -49,21 +44,19 @@ class StorageService {
     } catch (_) {}
   }
 
-  Future<bool> verifyAdmin(String pass) async => pass.trim() == _adminPass;
+  Future<bool> verifyAdmin(String pass) async {
+    final hash = sha256.convert(utf8.encode(pass.trim())).toString();
+    return hash == _adminHash;
+  }
 
   Future<void> setAdminSession(bool v) async {
-    try {
-      await _adminFile.writeAsString(v ? '1' : '0');
-    } catch (_) {}
+    try { await _adminFile.writeAsString(v ? '1' : '0'); } catch (_) {}
   }
 
   Future<bool> isAdminSession() async {
     try {
       if (!await _adminFile.exists()) return false;
-      final v = await _adminFile.readAsString();
-      return v == '1';
-    } catch (_) {
-      return false;
-    }
+      return (await _adminFile.readAsString()) == '1';
+    } catch (_) { return false; }
   }
 }

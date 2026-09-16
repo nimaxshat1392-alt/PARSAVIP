@@ -30,10 +30,8 @@ class ConfigParser {
     final p = hostPort.split(':');
     return VpnConfig(
       id: 'ss_${i}_${p[0].hashCode}',
-      name: 'PARSAVIP',
-      protocol: VpnProtocol.ss,
-      rawUri: uri,
-      host: p[0],
+      name: 'PARSAVIP', protocol: VpnProtocol.ss,
+      rawUri: uri, host: p[0],
       port: int.tryParse(p.length > 1 ? p[1].split('/').first : '443') ?? 443,
     );
   }
@@ -42,11 +40,8 @@ class ConfigParser {
     final u = Uri.parse(uri);
     return VpnConfig(
       id: 'vless_${i}_${u.host.hashCode}',
-      name: 'PARSAVIP',
-      protocol: VpnProtocol.vless,
-      rawUri: uri,
-      host: u.host,
-      port: u.port == 0 ? 443 : u.port,
+      name: 'PARSAVIP', protocol: VpnProtocol.vless,
+      rawUri: uri, host: u.host, port: u.port == 0 ? 443 : u.port,
     );
   }
 
@@ -55,10 +50,8 @@ class ConfigParser {
     final host = (j['add'] ?? '').toString();
     return VpnConfig(
       id: 'vmess_${i}_${host.hashCode}',
-      name: 'PARSAVIP',
-      protocol: VpnProtocol.vmess,
-      rawUri: uri,
-      host: host,
+      name: 'PARSAVIP', protocol: VpnProtocol.vmess,
+      rawUri: uri, host: host,
       port: int.tryParse((j['port'] ?? '443').toString()) ?? 443,
     );
   }
@@ -67,19 +60,14 @@ class ConfigParser {
     final u = Uri.parse(uri);
     return VpnConfig(
       id: 'trojan_${i}_${u.host.hashCode}',
-      name: 'PARSAVIP',
-      protocol: VpnProtocol.trojan,
-      rawUri: uri,
-      host: u.host,
-      port: u.port == 0 ? 443 : u.port,
+      name: 'PARSAVIP', protocol: VpnProtocol.trojan,
+      rawUri: uri, host: u.host, port: u.port == 0 ? 443 : u.port,
     );
   }
 
   static String _b64(String s) {
     s = s.replaceAll('-', '+').replaceAll('_', '/');
-    while (s.length % 4 != 0) {
-      s += '=';
-    }
+    while (s.length % 4 != 0) { s += '='; }
     return utf8.decode(base64.decode(s));
   }
 }

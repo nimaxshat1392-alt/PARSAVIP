@@ -12,9 +12,7 @@ void main() async {
       statusBarIconBrightness: Brightness.light,
     ),
   );
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(
     ChangeNotifierProvider(
       create: (_) => AppState()..init(),

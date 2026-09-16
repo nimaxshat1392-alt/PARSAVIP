@@ -25,42 +25,30 @@ class HomeScreen extends StatelessWidget {
           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
         ),
         title: const Text('PARSAVIP', style: TextStyle(letterSpacing: 3, fontWeight: FontWeight.w900)),
-        actions: [
-          IconButton(
-            icon: Icon(app.isAdmin ? Icons.admin_panel_settings : Icons.admin_panel_settings_outlined),
-            color: app.isAdmin ? C.success : null,
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => app.isAdmin ? const AdminPanelScreen() : const AdminLoginScreen())),
-          ),
-        ],
+        actions: [IconButton(
+          icon: Icon(app.isAdmin ? Icons.admin_panel_settings : Icons.admin_panel_settings_outlined),
+          color: app.isAdmin ? C.success : null,
+          onPressed: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => app.isAdmin ? const AdminPanelScreen() : const AdminLoginScreen())),
+        )],
       ),
-      body: GradientBackground(
-        child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              _StatusChip(),
-              const SizedBox(height: 8),
-              const Expanded(flex: 5, child: Center(child: ConnectOrb())),
-              Expanded(
-                flex: 4,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      _QuickStats(),
-                      const SizedBox(height: 12),
-                      _SelectedConfigCard(),
-                      const SizedBox(height: 12),
-                      _ActionRow(),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
-      ),
+      body: GradientBackground(child: SafeArea(child: Column(children: [
+        const SizedBox(height: 8),
+        _StatusChip(),
+        const SizedBox(height: 8),
+        const Expanded(flex: 5, child: Center(child: ConnectOrb())),
+        Expanded(flex: 4, child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(children: [
+            _QuickStats(),
+            const SizedBox(height: 12),
+            _SelectedConfigCard(),
+            const SizedBox(height: 12),
+            _ActionRow(),
+          ]),
+        )),
+        const SizedBox(height: 12),
+      ]))),
     );
   }
 }
@@ -78,11 +66,14 @@ class _StatusChip extends StatelessWidget {
     else { color = C.danger; text = 'DISCONNECTED'; }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-      decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(30), border: Border.all(color: color.withOpacity(0.5))),
+      decoration: BoxDecoration(color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(30), border: Border.all(color: color.withOpacity(0.5))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 8)])),
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle,
+          boxShadow: [BoxShadow(color: color, blurRadius: 8)])),
         const SizedBox(width: 8),
-        Text(text, style: TextStyle(color: color, fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 11)),
+        Text(text, textDirection: TextDirection.ltr, style: TextStyle(
+          color: color, fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 11)),
       ]),
     );
   }
@@ -102,11 +93,11 @@ class _QuickStats extends StatelessWidget {
         return GlassCard(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _stat(Icons.timer_outlined, 'Duration', '$hh:$mm:$ss', C.secondary),
+            _stat(Icons.timer_outlined, 'مدت', '$hh:$mm:$ss', C.secondary),
             _divider(),
-            _stat(Icons.bolt_rounded, 'Ping', '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms', C.warning),
+            _stat(Icons.bolt_rounded, 'پینگ', '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms', C.warning),
             _divider(),
-            _stat(Icons.language_rounded, 'Protocol', app.activeConfig?.protocolShort ?? app.selected?.protocolShort ?? '--', C.accent),
+            _stat(Icons.language_rounded, 'پروتکل', app.activeConfig?.protocolShort ?? app.selected?.protocolShort ?? '--', C.accent),
           ]),
         );
       },
@@ -114,9 +105,12 @@ class _QuickStats extends StatelessWidget {
   }
   Widget _stat(IconData i, String label, String value, Color color) {
     return Column(children: [
-      Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle), child: Icon(i, color: color, size: 14)),
+      Container(padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
+        child: Icon(i, color: color, size: 14)),
       const SizedBox(height: 4),
-      Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+      Text(value, textDirection: TextDirection.ltr,
+        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
       Text(label, style: const TextStyle(fontSize: 9, color: C.textSecondary)),
     ]);
   }
@@ -131,15 +125,23 @@ class _SelectedConfigCard extends StatelessWidget {
     return GlassCard(
       padding: const EdgeInsets.all(14),
       child: Row(children: [
-        Container(width: 44, height: 44, decoration: BoxDecoration(gradient: const LinearGradient(colors: [C.primary, C.secondary]), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.dns_rounded, color: Colors.white)),
+        Container(width: 44, height: 44, decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [C.primary, C.secondary]),
+          borderRadius: BorderRadius.circular(12)),
+          child: const Icon(Icons.dns_rounded, color: Colors.white)),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(c?.name ?? 'No Config', style: const TextStyle(fontWeight: FontWeight.w800)),
+          Text(c?.name ?? 'سروری انتخاب نشده', style: const TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 2),
-          Text(c == null ? 'Tap to choose' : '${c.host}:${c.port}', style: const TextStyle(color: C.textSecondary, fontSize: 11), overflow: TextOverflow.ellipsis),
+          Text(c == null ? 'برای انتخاب ضربه بزنید' : '${c.host}:${c.port}',
+            textDirection: TextDirection.ltr,
+            style: const TextStyle(color: C.textSecondary, fontSize: 11),
+            overflow: TextOverflow.ellipsis),
         ])),
         if (c?.ping != null) PingBadge(ping: c!.ping),
-        IconButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfigsScreen())), icon: const Icon(Icons.swap_horiz_rounded, color: C.secondary)),
+        IconButton(
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfigsScreen())),
+          icon: const Icon(Icons.swap_horiz_rounded, color: C.secondary)),
       ]),
     );
   }
@@ -154,9 +156,11 @@ class _ActionRow extends StatelessWidget {
         onTap: app.pinging ? null : () => app.pingAll(),
         padding: const EdgeInsets.symmetric(vertical: 14),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          if (app.pinging) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.secondary)) else const Icon(Icons.speed_rounded, color: C.secondary),
+          if (app.pinging) const SizedBox(width: 16, height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: C.secondary))
+          else const Icon(Icons.speed_rounded, color: C.secondary),
           const SizedBox(width: 8),
-          Text(app.pinging ? 'Testing...' : 'Test Ping', style: const TextStyle(fontWeight: FontWeight.w700)),
+          Text(app.pinging ? 'در حال تست...' : 'تست پینگ', style: const TextStyle(fontWeight: FontWeight.w700)),
         ]),
       )),
       const SizedBox(width: 10),
@@ -166,7 +170,7 @@ class _ActionRow extends StatelessWidget {
         child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(Icons.rocket_launch_rounded, color: C.accent),
           SizedBox(width: 8),
-          Text('Best Server', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text('بهترین سرور', style: TextStyle(fontWeight: FontWeight.w700)),
         ]),
       )),
     ]);

@@ -22,88 +22,37 @@ class ConfigTile extends StatelessWidget {
         if (context.mounted) Navigator.pop(context);
       },
       padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Container(
-            width: 6,
-            height: 44,
-            decoration: BoxDecoration(
-              color: selected ? C.success : protoColor,
-              borderRadius: BorderRadius.circular(3),
-              boxShadow: [
-                BoxShadow(
-                  color: (selected ? C.success : protoColor)
-                      .withOpacity(0.5),
-                  blurRadius: 8,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        config.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (selected) ...[
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.check_circle_rounded,
-                        size: 14,
-                        color: C.success,
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${config.host}:${config.port}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: C.textSecondary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              PingBadge(ping: config.ping),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 2,
-                ),
-                decoration: BoxDecoration(
-                  color: protoColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  config.protocolShort,
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: protoColor,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
+      child: Row(children: [
+        Container(width: 6, height: 44, decoration: BoxDecoration(
+          color: selected ? C.success : protoColor,
+          borderRadius: BorderRadius.circular(3),
+          boxShadow: [BoxShadow(color: (selected ? C.success : protoColor).withOpacity(0.5), blurRadius: 8)],
+        )),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Flexible(child: Text(config.name, style: const TextStyle(fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
+            if (selected) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.check_circle_rounded, size: 14, color: C.success),
             ],
+          ]),
+          const SizedBox(height: 3),
+          Text('${config.host}:${config.port}',
+            textDirection: TextDirection.ltr,
+            style: const TextStyle(fontSize: 11, color: C.textSecondary),
+            overflow: TextOverflow.ellipsis),
+        ])),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          PingBadge(ping: config.ping),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(color: protoColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
+            child: Text(config.protocolShort, style: TextStyle(fontSize: 9, color: protoColor, fontWeight: FontWeight.w700)),
           ),
-        ],
-      ),
+        ]),
+      ]),
     );
   }
 }

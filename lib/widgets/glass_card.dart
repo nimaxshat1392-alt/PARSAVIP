@@ -7,15 +7,11 @@ class GlassCard extends StatelessWidget {
   final EdgeInsets padding;
   final VoidCallback? onTap;
   final double radius;
-
   const GlassCard({
-    super.key,
-    required this.child,
+    super.key, required this.child,
     this.padding = const EdgeInsets.all(12),
-    this.onTap,
-    this.radius = 18,
+    this.onTap, this.radius = 18,
   });
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
