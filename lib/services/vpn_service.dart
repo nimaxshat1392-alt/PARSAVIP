@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter_v2ray/flutter_v2ray.dart';
+import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
@@ -8,7 +8,7 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  late FlutterV2ray _v2ray;
+  late V2ray _v2ray;
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -28,7 +28,7 @@ class VpnService {
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
   VpnService() {
-    _v2ray = FlutterV2ray(
+    _v2ray = V2ray(
       onStatusChanged: (status) {
         final s = status.state.toLowerCase();
         if (s.contains('connect') && !s.contains('disconnect')) {
@@ -45,9 +45,10 @@ class VpnService {
   Future<void> initialize() async {
     try {
       await _v2ray.initializeV2Ray();
-      await _logs.add(LogLevel.info, 'V2Ray initialized');
+      await _logs.add(LogLevel.info, 'V2Ray (Xray) initialized');
     } catch (e) {
       _lastError = e.toString();
+      await _logs.add(LogLevel.error, 'Init failed: $e');
     }
   }
 
@@ -59,33 +60,27 @@ class VpnService {
     _lastError = null;
 
     try {
-      // چک Reality
-      if (config.rawUri.contains('security=reality') ||
-          config.rawUri.contains('security%3Dreality')) {
-        throw Exception(
-            'این کانفیگ از Reality استفاده می‌کند که با این نسخه سازگار نیست.\n'
-            'لطفاً کانفیگ دیگری انتخاب کنید.');
-      }
-
       await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} @ ${config.host}');
 
-      final parser = FlutterV2ray.parseFromURL(config.rawUri);
+      // ۱. پارس کردن لینک اشتراک
+      final parser = V2ray.parseFromURL(config.rawUri);
       final fullConfig = parser.getFullConfiguration();
 
+      // ۲. درخواست مجوز VPN
       final permitted = await _v2ray.requestPermission();
       if (!permitted) throw Exception('دسترسی VPN رد شد');
 
-      // ✅ حالت TUN (مثل قبل که متصل می‌شد)
+      // ۳. شروع V2Ray در حالت TUN (VPN کامل)
       await _v2ray.startV2Ray(
         remark: config.name,
         config: fullConfig,
-        proxyOnly: false,
+        proxyOnly: false, // false = TUN mode (VPN کامل)
       );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected');
+      await _logs.add(LogLevel.success, '✅ Connected via Xray (TUN)');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
@@ -105,6 +100,7 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
+    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
