@@ -101,7 +101,7 @@ class AppTheme {
         contentTextStyle: GoogleFonts.vazirmatn(color: Colors.white),
         behavior: SnackBarBehavior.floating,
       ),
-      dialogTheme: DialogTheme(
+      dialogTheme: DialogThemeData(
         backgroundColor: C.bgCard,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
