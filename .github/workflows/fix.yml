@@ -1,4 +1,4 @@
-name: Fix and Build PARSAVIP
+name: Build PARSAVIP with Sing-box
 
 on:
   push:
@@ -43,13 +43,215 @@ jobs:
       - name: Force Gradle 8.3
         run: |
           sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-all\.zip|gradle-8.3-all.zip|g' android/gradle/wrapper/gradle-wrapper.properties
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Write correct settings.gradle
+        run: |
+          printf '%s\n' \
+            'pluginManagement {' \
+            '    def flutterSdkPath = {' \
+            '        def properties = new Properties()' \
+            '        file("local.properties").withInputStream { properties.load(it) }' \
+            '        def flutterSdkPath = properties.getProperty("flutter.sdk")' \
+            '        assert flutterSdkPath != null, "flutter.sdk not set in local.properties"' \
+            '        return flutterSdkPath' \
+            '    }()' \
+            '    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")' \
+            '    repositories {' \
+            '        google()' \
+            '        mavenCentral()' \
+            '        gradlePluginPortal()' \
+            '    }' \
+            '}' \
+            '' \
+            'plugins {' \
+            '    id "dev.flutter.flutter-plugin-loader" version "1.0.0"' \
+            '    id "com.android.application" version "8.1.4" apply false' \
+            '    id "org.jetbrains.kotlin.android" version "1.9.24" apply false' \
+            '}' \
+            '' \
+            'include ":app"' \
+            > android/settings.gradle
+          echo "=== settings.gradle ==="
+          cat android/settings.gradle
+
+      - name: Write correct root build.gradle
+        run: |
+          printf '%s\n' \
+            'buildscript {' \
+            '    ext.kotlin_version = "1.9.24"' \
+            '    repositories {' \
+            '        google()' \
+            '        mavenCentral()' \
+            '    }' \
+            '    dependencies {' \
+            '        classpath "com.android.tools.build:gradle:8.1.4"' \
+            '        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24"' \
+            '    }' \
+            '}' \
+            '' \
+            'allprojects {' \
+            '    repositories {' \
+            '        google()' \
+            '        mavenCentral()' \
+            '    }' \
+            '}' \
+            '' \
+            'rootProject.buildDir = "../build"' \
+            'subprojects {' \
+            '    project.buildDir = "${rootProject.buildDir}/${project.name}"' \
+            '}' \
+            'subprojects {' \
+            '    project.evaluationDependsOn(":app")' \
+            '}' \
+            '' \
+            'tasks.register("clean", Delete) {' \
+            '    delete rootProject.buildDir' \
+            '}' \
+            > android/build.gradle
+          echo "=== android/build.gradle ==="
+          cat android/build.gradle
+
+      - name: Write app/build.gradle
+        run: |
+          printf '%s\n' \
+            'plugins {' \
+            '    id "com.android.application"' \
+            '    id "kotlin-android"' \
+            '    id "dev.flutter.flutter-gradle-plugin"' \
+            '}' \
+            '' \
+            'android {' \
+            '    namespace = "com.parsavip.app"' \
+            '    compileSdk = 34' \
+            '    ndkVersion = flutter.ndkVersion' \
+            '' \
+            '    compileOptions {' \
+            '        sourceCompatibility = JavaVersion.VERSION_17' \
+            '        targetCompatibility = JavaVersion.VERSION_17' \
+            '    }' \
+            '' \
+            '    kotlinOptions {' \
+            '        jvmTarget = "17"' \
+            '    }' \
+            '' \
+            '    defaultConfig {' \
+            '        applicationId = "com.parsavip.app"' \
+            '        minSdk = 23' \
+            '        targetSdk = 34' \
+            '        versionCode = 1' \
+            '        versionName = "1.0.0"' \
+            '        multiDexEnabled = true' \
+            '    }' \
+            '' \
+            '    buildTypes {' \
+            '        release {' \
+            '            signingConfig = signingConfigs.debug' \
+            '            minifyEnabled = false' \
+            '            shrinkResources = false' \
+            '        }' \
+            '    }' \
+            '' \
+            '    packagingOptions {' \
+            '        jniLibs {' \
+            '            useLegacyPackaging = true' \
+            '        }' \
+            '    }' \
+            '}' \
+            '' \
+            'flutter {' \
+            '    source = "../.."' \
+            '}' \
+            > android/app/build.gradle
+          echo "=== android/app/build.gradle ==="
+          cat android/app/build.gradle
+
+      - name: Fix AndroidManifest permissions
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          printf '%s\n' \
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">' \
+            '    <uses-permission android:name="android.permission.INTERNET"/>' \
+            '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>' \
+            '    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>' \
+            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>' \
+            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>' \
+            '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' \
+            '    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission"/>' \
+            '' \
+            '    <application' \
+            '        android:label="PARSAVIP"' \
+            '        android:name="${applicationName}"' \
+            '        android:icon="@mipmap/ic_launcher"' \
+            '        android:usesCleartextTraffic="true"' \
+            '        android:extractNativeLibs="true"' \
+            '        tools:targetApi="31">' \
+            '        <activity' \
+            '            android:name=".MainActivity"' \
+            '            android:exported="true"' \
+            '            android:launchMode="singleTop"' \
+            '            android:theme="@style/LaunchTheme"' \
+            '            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"' \
+            '            android:hardwareAccelerated="true"' \
+            '            android:windowSoftInputMode="adjustResize">' \
+            '            <meta-data' \
+            '              android:name="io.flutter.embedding.android.NormalTheme"' \
+            '              android:resource="@style/NormalTheme"/>' \
+            '            <intent-filter>' \
+            '                <action android:name="android.intent.action.MAIN"/>' \
+            '                <category android:name="android.intent.category.LAUNCHER"/>' \
+            '            </intent-filter>' \
+            '        </activity>' \
+            '        <service' \
+            '            android:name=".ParsaVpnService"' \
+            '            android:exported="false"' \
+            '            android:foregroundServiceType="specialUse"' \
+            '            android:permission="android.permission.BIND_VPN_SERVICE">' \
+            '            <intent-filter>' \
+            '                <action android:name="android.net.VpnService"/>' \
+            '            </intent-filter>' \
+            '        </service>' \
+            '        <meta-data' \
+            '            android:name="flutterEmbedding"' \
+            '            android:value="2" />' \
+            '    </application>' \
+            '</manifest>' \
+            > $MANIFEST
+          echo "=== AndroidManifest.xml ==="
+          cat $MANIFEST
+
+      - name: Download sing-box binary
+        run: |
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p android/app/src/main/jniLibs/x86_64
+
+          SB_VERSION="1.10.1"
+          cd /tmp
+
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-android-arm64.tar.gz" -O sb-arm64.tar.gz
+          tar -xzf sb-arm64.tar.gz
+          cp "sing-box-${SB_VERSION}-android-arm64/sing-box" "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
+          chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
+
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-android-arm.tar.gz" -O sb-arm.tar.gz
+          tar -xzf sb-arm.tar.gz
+          cp "sing-box-${SB_VERSION}-android-arm/sing-box" "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so"
+          chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/libsingbox.so"
+
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-android-amd64.tar.gz" -O sb-amd64.tar.gz
+          tar -xzf sb-amd64.tar.gz
+          cp "sing-box-${SB_VERSION}-android-amd64/sing-box" "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/x86_64/libsingbox.so"
+          chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/x86_64/libsingbox.so"
+
+          ls -la "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/"
 
       - name: Commit android folder
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add android/
-          git commit -m "Fix Gradle 8.3" || echo "Nothing to commit"
+          git commit -m "Force Kotlin 1.9.24 + Gradle 8.3 + Sing-box" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
