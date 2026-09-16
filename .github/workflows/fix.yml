@@ -13,19 +13,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
@@ -34,7 +31,7 @@ jobs:
       - name: Backup pubspec
         run: cp pubspec.yaml pubspec_backup.yaml
 
-      - name: Generate android folder
+      - name: Regenerate android
         run: |
           rm -rf android
           flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
@@ -43,152 +40,37 @@ jobs:
       - name: Restore pubspec
         run: mv pubspec_backup.yaml pubspec.yaml
 
-      - name: Fix Gradle version in wrapper
+      - name: Debug - show BEFORE
         run: |
-          mkdir -p android/gradle/wrapper
-          cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.3-all.zip
-          EOF
+          echo "=== gradle-wrapper.properties BEFORE ==="
+          cat android/gradle/wrapper/gradle-wrapper.properties || echo "NOT FOUND"
+          echo ""
+          echo "=== settings.gradle BEFORE ==="
+          cat android/settings.gradle || echo "NOT FOUND"
+
+      - name: Force Gradle 8.3 in wrapper properties
+        run: |
+          WRAPPER_FILE=android/gradle/wrapper/gradle-wrapper.properties
+          sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-all\.zip|gradle-8.3-all.zip|g' "$WRAPPER_FILE"
+          sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-bin\.zip|gradle-8.3-bin.zip|g' "$WRAPPER_FILE"
+
+      - name: Debug - show AFTER
+        run: |
+          echo "=== gradle-wrapper.properties AFTER ==="
           cat android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Overwrite settings.gradle
+      - name: Clean old gradle caches
         run: |
-          cat > android/settings.gradle << 'EOF'
-          pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  file("local.properties").withInputStream { properties.load(it) }
-                  def flutterSdkPath = properties.getProperty("flutter.sdk")
-                  assert flutterSdkPath != null, "flutter.sdk not set in local.properties"
-                  return flutterSdkPath
-              }()
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.1.4" apply false
-              id "org.jetbrains.kotlin.android" version "1.9.24" apply false
-          }
-
-          include ":app"
-          EOF
-          cat android/settings.gradle
-
-      - name: Overwrite app/build.gradle
-        run: |
-          cat > android/app/build.gradle << 'EOF'
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-
-          android {
-              namespace = "com.parsavip.app"
-              compileSdk = 34
-              ndkVersion = flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              defaultConfig {
-                  applicationId = "com.parsavip.app"
-                  minSdk = 23
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0.0"
-                  multiDexEnabled = true
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig = signingConfigs.debug
-                      minifyEnabled = false
-                      shrinkResources = false
-                  }
-              }
-
-              packagingOptions {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-              }
-          }
-
-          flutter {
-              source = "../.."
-          }
-          EOF
-          cat android/app/build.gradle
-
-      - name: Overwrite AndroidManifest.xml
-        run: |
-          mkdir -p android/app/src/main
-          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              xmlns:tools="http://schemas.android.com/tools">
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
-                  tools:ignore="QueryAllPackagesPermission" />
-
-              <application
-                  android:label="PARSAVIP"
-                  android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher"
-                  android:usesCleartextTraffic="true"
-                  android:extractNativeLibs="true"
-                  tools:targetApi="31">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:theme="@style/LaunchTheme"
-                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                      android:hardwareAccelerated="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <meta-data
-                        android:name="io.flutter.embedding.android.NormalTheme"
-                        android:resource="@style/NormalTheme" />
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2" />
-              </application>
-          </manifest>
-          EOF
-          cat android/app/src/main/AndroidManifest.xml
+          rm -rf ~/.gradle/caches/7.6.3
+          rm -rf ~/.gradle/wrapper/dists/gradle-7.6.3-all || true
+          rm -rf ~/.gradle/wrapper/dists/gradle-7.6.3-bin || true
 
       - name: Commit android folder
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add android/
-          git commit -m "Fix android: Gradle 8.3 + Kotlin 1.9.24 + AGP 8.1.4" || echo "Nothing to commit"
+          git commit -m "Force Gradle 8.3" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
