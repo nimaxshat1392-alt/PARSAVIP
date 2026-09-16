@@ -4,6 +4,7 @@ import '../models/vpn_config.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import 'glass_card.dart';
+import 'ping_badge.dart';
 
 class ConfigTile extends StatelessWidget {
   final VpnConfig config;
@@ -76,23 +77,30 @@ class ConfigTile extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 6,
-              vertical: 2,
-            ),
-            decoration: BoxDecoration(
-              color: protoColor.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              config.protocolShort,
-              style: TextStyle(
-                fontSize: 9,
-                color: protoColor,
-                fontWeight: FontWeight.w700,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              PingBadge(ping: config.ping),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: protoColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  config.protocolShort,
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: protoColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
