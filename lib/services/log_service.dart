@@ -1,18 +1,18 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
 import '../models/log_entry.dart';
 
 class LogService {
-  static const _key = 'parsavip_logs_v1';
   static const int maxLogs = 500;
-
   final List<LogEntry> _buffer = [];
 
+  File get _file => File('${Directory.systemTemp.path}/parsavip_logs.json');
+
   Future<void> init() async {
-    final sp = await SharedPreferences.getInstance();
-    final raw = sp.getString(_key);
-    if (raw == null || raw.isEmpty) return;
     try {
+      if (!await _file.exists()) return;
+      final raw = await _file.readAsString();
+      if (raw.isEmpty) return;
       final list = jsonDecode(raw) as List;
       _buffer
         ..clear()
@@ -32,20 +32,18 @@ class LogService {
     if (_buffer.length > maxLogs) {
       _buffer.removeRange(0, _buffer.length - maxLogs);
     }
-    await _persist();
+    try {
+      await _file.writeAsString(
+        jsonEncode(_buffer.map((e) => e.toJson()).toList()),
+      );
+    } catch (_) {}
   }
 
   Future<void> clear() async {
     _buffer.clear();
-    await _persist();
-  }
-
-  Future<void> _persist() async {
-    final sp = await SharedPreferences.getInstance();
-    await sp.setString(
-      _key,
-      jsonEncode(_buffer.map((e) => e.toJson()).toList()),
-    );
+    try {
+      if (await _file.exists()) await _file.delete();
+    } catch (_) {}
   }
 
   int countByLevel(LogLevel level) =>
