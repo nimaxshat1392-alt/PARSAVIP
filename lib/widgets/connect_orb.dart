@@ -37,7 +37,7 @@ class _ConnectOrbState extends State<ConnectOrb>
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final isConnected = app.connected;
+    final isConnected = app.isConnected;
     final primary = isConnected ? C.success : C.primary;
     final secondary =
         isConnected ? const Color(0xFF69F0AE) : C.secondary;
