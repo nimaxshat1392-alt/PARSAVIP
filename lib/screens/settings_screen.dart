@@ -1,30 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/gradient_background.dart';
 import 'about_screen.dart';
 import 'faq_screen.dart';
 import 'logs_screen.dart';
-import 'backup_screen.dart';
-import 'subscription_screen.dart';
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  String _version = '1.0.0';
-
-  @override
-  void initState() {
-    super.initState();
-    PackageInfo.fromPlatform().then((p) {
-      if (mounted) setState(() => _version = '${p.version}+${p.buildNumber}');
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,40 +19,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                child: Text(
-                  'ابزارها',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-              _tile(
-                icon: Icons.cloud_download_rounded,
-                title: 'اشتراک آنلاین',
-                subtitle: 'افزودن گروهی از لینک ساب',
-                color: C.secondary,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const SubscriptionScreen(),
-                  ),
-                ),
-              ),
-              _tile(
-                icon: Icons.save_alt_rounded,
-                title: 'پشتیبان‌گیری',
-                subtitle: 'خروجی و ورودی کانفیگ‌ها',
-                color: C.primary,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const BackupScreen(),
-                  ),
-                ),
-              ),
               _tile(
                 icon: Icons.list_alt_rounded,
                 title: 'گزارش‌ها',
@@ -77,20 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: C.warning,
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const LogsScreen(),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                child: Text(
-                  'درباره',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
+                  MaterialPageRoute(builder: (_) => const LogsScreen()),
                 ),
               ),
               _tile(
@@ -100,9 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: C.success,
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const FaqScreen(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const FaqScreen()),
                 ),
               ),
               _tile(
@@ -112,17 +46,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: C.accent,
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const AboutScreen(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const AboutScreen()),
                 ),
               ),
-              _tile(
-                icon: Icons.numbers_rounded,
-                title: 'نسخه',
-                subtitle: _version,
-                color: C.textSecondary,
-                onTap: null,
+              const SizedBox(height: 20),
+              const Center(
+                child: Text(
+                  'PARSAVIP v1.0.0',
+                  style: TextStyle(color: C.textHint, fontSize: 12),
+                ),
               ),
             ],
           ),
@@ -158,26 +90,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: C.textSecondary,
-                      fontSize: 11,
-                    ),
-                  ),
+                  Text(subtitle,
+                      style: const TextStyle(color: C.textSecondary, fontSize: 11)),
                 ],
               ),
             ),
             if (onTap != null)
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: C.textSecondary,
-              ),
+              const Icon(Icons.chevron_right_rounded, color: C.textSecondary),
           ],
         ),
       ),
