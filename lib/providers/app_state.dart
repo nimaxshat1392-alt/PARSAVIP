@@ -28,6 +28,9 @@ class AppState extends ChangeNotifier {
     await logs.init();
     await logs.add(LogLevel.info, 'App started');
 
+    // 👇 مقداردهی اولیه سرویس VPN (بسیار مهم)
+    await vpn.initialize();
+
     configs = await storage.loadConfigs();
     if (configs.isEmpty) {
       final parsed = <VpnConfig>[];
