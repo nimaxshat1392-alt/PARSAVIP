@@ -39,7 +39,6 @@ jobs:
           rm -rf .metadata
           rm -rf .dart_tool
           rm -rf build
-          ls -la
 
       - name: Generate fresh android folder
         run: |
@@ -51,9 +50,6 @@ jobs:
           cp -r /tmp/backup/lib ./lib
           cp /tmp/backup/pubspec.yaml ./pubspec.yaml
           rm -rf test
-          ls -la
-          echo "=== lib ==="
-          ls lib/
 
       - name: Auto-remove files that need missing packages
         run: |
@@ -93,6 +89,16 @@ jobs:
           rm -f lib/widgets/fade_in_route.dart
           echo "=== Remaining files ==="
           find lib -type f -name "*.dart" | sort
+
+      - name: Fix app_theme.dart dialog API
+        run: |
+          # Flutter 3.27+ با DialogThemeData کار می‌کنه
+          if [ -f lib/theme/app_theme.dart ]; then
+            sed -i 's/dialogTheme: DialogTheme(/dialogTheme: DialogThemeData(/g' lib/theme/app_theme.dart
+            sed -i 's/^DialogTheme get/DialogThemeData get/g' lib/theme/app_theme.dart || true
+          fi
+          echo "=== app_theme.dart (lines 95-120) ==="
+          sed -n '95,120p' lib/theme/app_theme.dart
 
       - name: Rewrite settings_screen
         run: |
@@ -148,34 +154,8 @@ jobs:
           }
           SETTINGS_EOF
 
-      - name: Fix broken imports in home_screen
+      - name: Rewrite home_screen
         run: |
-          if [ -f lib/screens/home_screen.dart ]; then
-            sed -i "/import '.*settings_screen/d" lib/screens/home_screen.dart || true
-            sed -i "/import '.*qr_screen/d" lib/screens/home_screen.dart || true
-            sed -i "/import '.*config_details/d" lib/screens/home_screen.dart || true
-            # اضافه کردن settings_screen به عنوان import معتبر
-            sed -i "1i import 'settings_screen.dart';" lib/screens/home_screen.dart || true
-          fi
-
-      - name: Fix app_state imports
-        run: |
-          if [ -f lib/providers/app_state.dart ]; then
-            sed -i "/import '.*backup_service/d" lib/providers/app_state.dart || true
-            sed -i "/import '.*import_service/d" lib/providers/app_state.dart || true
-            sed -i "/import '.*native_vpn/d" lib/providers/app_state.dart || true
-            sed -i "/import '.*theme_service/d" lib/providers/app_state.dart || true
-          fi
-
-      - name: Fix admin_panel imports
-        run: |
-          if [ -f lib/screens/admin_panel_screen.dart ]; then
-            sed -i "/import '.*qr_screen/d" lib/screens/admin_panel_screen.dart || true
-          fi
-
-      - name: Fix home_screen body content
-        run: |
-          # rewrite home_screen.dart with a simplified version
           cat > lib/screens/home_screen.dart << 'HOME_EOF'
           import 'package:flutter/material.dart';
           import 'package:provider/provider.dart';
@@ -358,16 +338,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Complete rebuild with fresh android" || echo "Nothing to commit"
+          git commit -m "Fix DialogThemeData + rebuild" || echo "Nothing to commit"
           git push || echo "Nothing to push"
-
-      - name: Final check
-        run: |
-          echo "=== Files in lib ==="
-          find lib -type f -name "*.dart" | sort
-          echo ""
-          echo "=== pubspec.yaml ==="
-          cat pubspec.yaml
 
       - name: Get dependencies
         run: flutter pub get
