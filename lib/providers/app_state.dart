@@ -2,18 +2,27 @@ import 'package:flutter/foundation.dart';
 import '../models/vpn_config.dart';
 import '../services/storage_service.dart';
 import '../services/config_parser.dart';
+import '../services/ping_service.dart';
+import '../services/vpn_service.dart';
 import '../data/default_configs.dart';
 
 class AppState extends ChangeNotifier {
   final storage = StorageService();
+  final vpn = VpnService();
 
   List<VpnConfig> configs = [];
   VpnConfig? selected;
   bool isAdmin = false;
   bool loading = true;
-  bool connected = false;
+  bool pinging = false;
+  double pingProgress = 0;
+
+  VpnStatus get status => vpn.status;
+  bool get isConnected => vpn.isConnected;
+  VpnConfig? get activeConfig => vpn.current;
 
   Future<void> init() async {
+    // بارگذاری یا ساخت از پیش‌فرض
     configs = await storage.loadConfigs();
     if (configs.isEmpty) {
       final parsed = <VpnConfig>[];
@@ -43,6 +52,9 @@ class AppState extends ChangeNotifier {
     isAdmin = await storage.isAdminSession();
     loading = false;
     notifyListeners();
+
+    // گوش دادن به تغییرات وضعیت VPN
+    vpn.statusStream.listen((_) => notifyListeners());
   }
 
   VpnConfig _empty() => VpnConfig(
@@ -54,12 +66,63 @@ class AppState extends ChangeNotifier {
         port: 0,
       );
 
-  void toggleConnection() {
-    if (selected == null) return;
-    connected = !connected;
+  // ============ پینگ ============
+  Future<void> pingAll() async {
+    if (pinging) return;
+    pinging = true;
+    pingProgress = 0;
+    notifyListeners();
+
+    configs = await PingService.pingAll(
+      configs,
+      onProgress: (d, t) {
+        pingProgress = d / t;
+        notifyListeners();
+      },
+    );
+
+    await storage.saveConfigs(configs);
+    pinging = false;
+    pingProgress = 0;
     notifyListeners();
   }
 
+  Future<void> pingOne(VpnConfig c) async {
+    final ms = await PingService.pingOne(c);
+    final idx = configs.indexWhere((x) => x.id == c.id);
+    if (idx == -1) return;
+    configs[idx] = VpnConfig(
+      id: c.id,
+      name: c.name,
+      protocol: c.protocol,
+      rawUri: c.rawUri,
+      host: c.host,
+      port: c.port,
+      ping: ms,
+    );
+    await storage.saveConfigs(configs);
+    notifyListeners();
+  }
+
+  // ============ اتصال ============
+  Future<void> toggleConnection() async {
+    if (selected == null) return;
+    await vpn.toggle(selected!);
+    notifyListeners();
+  }
+
+  Future<void> connectToBest() async {
+    // اول پینگ همه، بعد به بهترین وصل شو
+    await pingAll();
+    final best = PingService.best(configs);
+    if (best != null) {
+      await selectConfig(best);
+      await vpn.connect(best);
+      notifyListeners();
+    }
+  }
+
+  // ============ انتخاب و مدیریت کانفیگ ============
   Future<void> selectConfig(VpnConfig c) async {
     selected = c;
     await storage.saveSelectedId(c.id);
@@ -69,7 +132,9 @@ class AppState extends ChangeNotifier {
   Future<bool> addConfig(String uri) async {
     final c = ConfigParser.parse(uri, index: configs.length);
     if (c == null) return false;
-    if (configs.any((x) => x.host == c.host && x.port == c.port)) return false;
+    if (configs.any((x) => x.host == c.host && x.port == c.port)) {
+      return false;
+    }
     configs.add(c);
     await storage.saveConfigs(configs);
     notifyListeners();
@@ -103,6 +168,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ============ ادمین ============
   Future<bool> loginAdmin(String pass) async {
     final ok = await storage.verifyAdmin(pass);
     if (ok) {
@@ -117,5 +183,11 @@ class AppState extends ChangeNotifier {
     isAdmin = false;
     await storage.setAdminSession(false);
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    vpn.dispose();
+    super.dispose();
   }
 }
