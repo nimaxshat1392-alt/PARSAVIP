@@ -5,95 +5,29 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter (latest stable)
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.19.6'
           channel: 'stable'
           cache: true
-
-      - name: Show versions
-        run: |
-          flutter --version
-          java -version
-
-      - name: Clean old android
-        run: |
-          rm -rf android
-          rm -rf .metadata
-
-      - name: Backup lib folder
-        run: |
-          mkdir -p /tmp/lib_backup
-          cp -r lib/* /tmp/lib_backup/ || true
-          mkdir -p /tmp/pubspec_backup
-          cp pubspec.yaml /tmp/pubspec_backup/ || true
-
-      - name: Regenerate android folder
-        run: |
-          flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
-
-      - name: Restore lib and pubspec
-        run: |
-          rm -rf lib
-          mkdir -p lib
-          cp -r /tmp/lib_backup/* lib/
-          cp /tmp/pubspec_backup/pubspec.yaml pubspec.yaml
-          rm -rf test
-
-      - name: Download sing-box binary
-        run: |
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          SB_VERSION="1.10.1"
-          cd /tmp
-          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-android-arm64.tar.gz"
-          tar -xzf "sing-box-${SB_VERSION}-android-arm64.tar.gz"
-          cp "sing-box-${SB_VERSION}-android-arm64/sing-box" \
-             "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
-          chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
-          ls -la "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/"
-
-      - name: Patch AndroidManifest
-        run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          
-          # اضافه کردن مجوزها بعد از tag manifest
-          sed -i 's|<manifest\(.*\)>|<manifest\1>\
-              <uses-permission android:name="android.permission.INTERNET"/>\
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' $MANIFEST
-          
-          # تغییر label
-          sed -i 's|android:label="parsavip"|android:label="PARSAVIP" android:extractNativeLibs="true"|' $MANIFEST
-          
-          echo "=== FINAL MANIFEST ==="
-          cat $MANIFEST
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze (non-blocking)
-        run: flutter analyze || true
-
       - name: Build APK
-        run: flutter build apk --release --target-platform android-arm64
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -101,4 +35,3 @@ jobs:
           name: parsavip-apk
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 30
-          if-no-files-found: error
