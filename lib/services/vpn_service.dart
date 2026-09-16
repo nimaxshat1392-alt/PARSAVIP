@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import '../models/vpn_config.dart';
+import 'log_service.dart';
+import '../models/log_entry.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
+  final LogService _logs = LogService();
   late FlutterV2ray _v2ray;
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
@@ -42,8 +45,10 @@ class VpnService {
   Future<void> initialize() async {
     try {
       await _v2ray.initializeV2Ray();
+      await _logs.add(LogLevel.info, 'V2Ray initialized');
     } catch (e) {
       _lastError = e.toString();
+      await _logs.add(LogLevel.error, 'Init failed: $e');
     }
   }
 
@@ -55,23 +60,42 @@ class VpnService {
     _lastError = null;
 
     try {
+      await _logs.add(LogLevel.info, 'Parsing config: ${config.protocolShort}');
+
+      // ✅ مرحله کلیدی: پارس کردن URI به JSON
+      final parser = FlutterV2ray.parseFromURL(config.rawUri);
+      final fullConfig = parser.getFullConfiguration();
+
+      await _logs.add(LogLevel.info, 'Parsed OK, requesting permission');
+
       final permitted = await _v2ray.requestPermission();
-      if (!permitted) throw Exception('VPN permission denied');
+      if (!permitted) {
+        throw Exception('دسترسی VPN رد شد');
+      }
+
+      await _logs.add(LogLevel.info, 'Starting V2Ray...');
 
       await _v2ray.startV2Ray(
         remark: config.name,
-        config: config.rawUri,
+        config: fullConfig,
         proxyOnly: false,
+        blockedApps: null,
+        bypassApps: null,
+        bypassSubnets: null,
+        notificationIconResourceType: 'mipmap',
+        notificationIconResourceName: 'ic_launcher',
       );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
+      await _logs.add(LogLevel.success, 'Connected');
       return true;
     } catch (e) {
       _lastError = e.toString();
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
+      await _logs.add(LogLevel.error, 'Connect failed: $e');
       return false;
     }
   }
@@ -85,6 +109,7 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
+    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
