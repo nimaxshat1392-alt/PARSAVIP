@@ -5,42 +5,34 @@ plugins {
 }
 
 android {
-    namespace "com.parsavip.app"
-    compileSdk 34
-    ndkVersion flutter.ndkVersion
+    namespace = "com.parsavip.app"
+    compileSdk = 34
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = '17'
+        jvmTarget = "17"
     }
 
     defaultConfig {
-        applicationId "com.parsavip.app"
-        minSdkVersion 23
-        targetSdkVersion 34
-        versionCode 1
-        versionName "1.0.0"
+        applicationId = "com.parsavip.app"
+        minSdk = 21
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
-            minifyEnabled false
-            shrinkResources false
-        }
-    }
-
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging = true
+            signingConfig = signingConfigs.debug
         }
     }
 }
 
 flutter {
-    source '../..'
+    source = "../.."
 }
