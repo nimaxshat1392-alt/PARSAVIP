@@ -26,29 +26,17 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Flutter doctor
-        run: flutter doctor -v
-
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Create placeholder assets
-        run: |
-          mkdir -p assets
-          touch assets/.keep
+      - name: Analyze project
+        run: flutter analyze
 
-      - name: Build APK
-        run: flutter build apk --release --split-per-abi
-        continue-on-error: true
-
-      - name: Build APK (fallback universal)
-        if: failure()
-        run: flutter build apk --release
+      - name: Build APK (debug)
+        run: flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: parsavip-apk
+          name: parsavip-debug-apk
           path: build/app/outputs/flutter-apk/*.apk
-          retention-days: 30
-          if-no-files-found: warn
