@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -46,64 +45,9 @@ class VpnService {
   Future<void> initialize() async {
     try {
       await _v2ray.initializeV2Ray();
-      await _logs.add(LogLevel.info, 'V2Ray init OK');
+      await _logs.add(LogLevel.info, 'V2Ray initialized');
     } catch (e) {
       _lastError = e.toString();
-      await _logs.add(LogLevel.error, 'Init failed: $e');
-    }
-  }
-
-  /// ساخت config کامل با TUN + DNS + routing
-  String _buildConfig(String uri) {
-    try {
-      final parser = FlutterV2ray.parseFromURL(uri);
-      final baseConfig = parser.getFullConfiguration();
-      final configMap = jsonDecode(baseConfig) as Map<String, dynamic>;
-
-      // ✅ Log کن که ببینیم چی هست
-      _logs.add(LogLevel.info, 'Config keys: ${configMap.keys.join(",")}');
-
-      // ✅ DNS
-      configMap['dns'] = {
-        'servers': ['1.1.1.1', '8.8.8.8', '1.0.0.1'],
-        'queryStrategy': 'UseIP',
-        'disableCache': false,
-      };
-
-      // ✅ routing - همه چیز به پروکسی
-      configMap['routing'] = {
-        'domainStrategy': 'IPIfNonMatch',
-        'rules': [
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'ip': ['geoip:private'],
-            'domain': ['geosite:private']
-          },
-        ],
-        'final': 'proxy',
-      };
-
-      // ✅ sniffing به inbound
-      final inbounds = configMap['inbounds'] as List?;
-      if (inbounds != null) {
-        for (var inb in inbounds) {
-          if (inb is Map<String, dynamic>) {
-            inb['sniffing'] = {
-              'enabled': true,
-              'destOverride': ['http', 'tls', 'quic'],
-              'routeOnly': true,
-            };
-          }
-        }
-      }
-
-      final finalConfig = jsonEncode(configMap);
-      _logs.add(LogLevel.info, 'Config built OK');
-      return finalConfig;
-    } catch (e) {
-      _logs.add(LogLevel.error, 'buildConfig fail: $e');
-      return FlutterV2ray.parseFromURL(uri).getFullConfiguration();
     }
   }
 
@@ -115,12 +59,21 @@ class VpnService {
     _lastError = null;
 
     try {
-      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} ${config.host}');
+      // ✅ چک کن اگه Reality داره
+      if (config.rawUri.contains('security=reality') ||
+          config.rawUri.contains('security%3Dreality')) {
+        throw Exception(
+            'این کانفیگ از Reality استفاده می‌کند که با این نسخه سازگار نیست.\n'
+            'لطفاً کانفیگ دیگری انتخاب کنید.');
+      }
 
-      final fullConfig = _buildConfig(config.rawUri);
+      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} @ ${config.host}');
+
+      final parser = FlutterV2ray.parseFromURL(config.rawUri);
+      final fullConfig = parser.getFullConfiguration();
 
       final permitted = await _v2ray.requestPermission();
-      if (!permitted) throw Exception('VPN permission denied');
+      if (!permitted) throw Exception('دسترسی VPN رد شد');
 
       await _v2ray.startV2Ray(
         remark: config.name,
@@ -131,13 +84,13 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, 'Connected');
+      await _logs.add(LogLevel.success, '✅ Connected');
       return true;
     } catch (e) {
-      _lastError = e.toString();
+      _lastError = e.toString().replaceFirst('Exception: ', '');
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, 'Failed: $e');
+      await _logs.add(LogLevel.error, '❌ $e');
       return false;
     }
   }
@@ -151,7 +104,6 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
-    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
