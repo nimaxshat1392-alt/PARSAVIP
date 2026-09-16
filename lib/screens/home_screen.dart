@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../services/vpn_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/connect_orb.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/ping_badge.dart';
 import 'configs_screen.dart';
 import 'admin_login_screen.dart';
 import 'admin_panel_screen.dart';
@@ -63,6 +65,8 @@ class HomeScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
+                      const _QuickStats(),
+                      const SizedBox(height: 12),
                       const _SelectedConfigCard(),
                       const SizedBox(height: 12),
                       _ActionRow(),
@@ -83,13 +87,33 @@ class _StatusChip extends StatelessWidget {
   const _StatusChip();
   @override
   Widget build(BuildContext context) {
-    final connected = context.watch<AppState>().connected;
-    final color = connected ? C.success : C.danger;
+    final app = context.watch<AppState>();
+    final s = app.status;
+    late Color color;
+    late String text;
+    switch (s) {
+      case VpnStatus.connected:
+        color = C.success;
+        text = 'CONNECTED';
+        break;
+      case VpnStatus.connecting:
+        color = C.warning;
+        text = 'CONNECTING...';
+        break;
+      case VpnStatus.disconnecting:
+        color = C.warning;
+        text = 'DISCONNECTING...';
+        break;
+      case VpnStatus.error:
+        color = C.danger;
+        text = 'ERROR';
+        break;
+      default:
+        color = C.danger;
+        text = 'DISCONNECTED';
+    }
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 7,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
       decoration: BoxDecoration(
         color: color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(30),
@@ -104,14 +128,12 @@ class _StatusChip extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(color: color, blurRadius: 8),
-              ],
+              boxShadow: [BoxShadow(color: color, blurRadius: 8)],
             ),
           ),
           const SizedBox(width: 8),
           Text(
-            connected ? 'CONNECTED' : 'DISCONNECTED',
+            text,
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.w800,
@@ -123,6 +145,80 @@ class _StatusChip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _QuickStats extends StatelessWidget {
+  const _QuickStats();
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    return StreamBuilder<Duration>(
+      stream: app.vpn.durationStream,
+      builder: (_, snap) {
+        final d = snap.data ?? Duration.zero;
+        final hh = d.inHours.toString().padLeft(2, '0');
+        final mm = (d.inMinutes % 60).toString().padLeft(2, '0');
+        final ss = (d.inSeconds % 60).toString().padLeft(2, '0');
+        return GlassCard(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _stat(
+                Icons.timer_outlined,
+                'Duration',
+                '$hh:$mm:$ss',
+                C.secondary,
+              ),
+              _divider(),
+              _stat(
+                Icons.bolt_rounded,
+                'Ping',
+                '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms',
+                C.warning,
+              ),
+              _divider(),
+              _stat(
+                Icons.language_rounded,
+                'Protocol',
+                app.activeConfig?.protocolShort ??
+                    app.selected?.protocolShort ??
+                    '--',
+                C.accent,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _stat(IconData i, String label, String value, Color color) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(i, color: color, size: 14),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+        ),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 9, color: C.textSecondary),
+        ),
+      ],
+    );
+  }
+
+  Widget _divider() =>
+      Container(width: 1, height: 30, color: Colors.white12);
 }
 
 class _SelectedConfigCard extends StatelessWidget {
@@ -144,10 +240,7 @@ class _SelectedConfigCard extends StatelessWidget {
               ),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(
-              Icons.dns_rounded,
-              color: Colors.white,
-            ),
+            child: const Icon(Icons.dns_rounded, color: Colors.white),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -170,12 +263,11 @@ class _SelectedConfigCard extends StatelessWidget {
               ],
             ),
           ),
+          if (c?.ping != null) PingBadge(ping: c!.ping),
           IconButton(
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => const ConfigsScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const ConfigsScreen()),
             ),
             icon: const Icon(
               Icons.swap_horiz_rounded,
@@ -192,23 +284,73 @@ class _ActionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    return GlassCard(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const ConfigsScreen()),
-      ),
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.list_rounded, color: C.accent),
-          const SizedBox(width: 8),
-          Text(
-            'Configs (${app.configs.length})',
-            style: const TextStyle(fontWeight: FontWeight.w700),
+    return Row(
+      children: [
+        Expanded(
+          child: GlassCard(
+            onTap: app.pinging ? null : () => app.pingAll(),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Stack(
+              children: [
+                if (app.pinging)
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: LinearProgressIndicator(
+                        value: app.pingProgress,
+                        backgroundColor: Colors.transparent,
+                        color: C.secondary.withOpacity(0.3),
+                        minHeight: 60,
+                      ),
+                    ),
+                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (app.pinging)
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: C.secondary,
+                        ),
+                      )
+                    else
+                      const Icon(
+                        Icons.speed_rounded,
+                        color: C.secondary,
+                      ),
+                    const SizedBox(width: 8),
+                    Text(
+                      app.pinging ? 'Testing...' : 'Test Ping',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: GlassCard(
+            onTap: app.pinging ? null : () => app.connectToBest(),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.rocket_launch_rounded, color: C.accent),
+                const SizedBox(width: 8),
+                const Text(
+                  'Best Server',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
