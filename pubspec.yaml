@@ -16,7 +16,6 @@ dependencies:
   qr_flutter: ^4.1.0
   package_info_plus: ^8.0.0
   http: ^1.1.0
-  flutter_singbox_client: ^1.1.0 # پلاگین جدید برای اتصال واقعی
 
 dev_dependencies:
   flutter_test:
