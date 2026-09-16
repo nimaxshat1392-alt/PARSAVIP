@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'package:flutter_v2ray_client/flutter_v2ray.dart';
+import 'dart:convert';
+import 'package:flutter_v2ray/flutter_v2ray.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
@@ -8,7 +9,7 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  late V2ray _v2ray;
+  late FlutterV2ray _v2ray;
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -28,7 +29,7 @@ class VpnService {
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
   VpnService() {
-    _v2ray = V2ray(
+    _v2ray = FlutterV2ray(
       onStatusChanged: (status) {
         final s = status.state.toLowerCase();
         if (s.contains('connect') && !s.contains('disconnect')) {
@@ -44,14 +45,84 @@ class VpnService {
 
   Future<void> initialize() async {
     try {
-      await _v2ray.initialize(
-        notificationIconResourceType: "mipmap",
-        notificationIconResourceName: "ic_launcher",
-      );
-      await _logs.add(LogLevel.info, 'V2Ray (Xray) initialized');
+      await _v2ray.initializeV2Ray();
+      await _logs.add(LogLevel.info, 'V2Ray initialized');
     } catch (e) {
       _lastError = e.toString();
-      await _logs.add(LogLevel.error, 'Init failed: $e');
+    }
+  }
+
+  /// ⭐ این متد config رو بازنویسی می‌کنه تا sockopt.mark اضافه کنه
+  /// بدون mark، ترافیک خروجی خود V2Ray هم از تونل رد می‌شه و loop می‌شه
+  String _prepareConfig(VpnConfig config) {
+    try {
+      final parser = FlutterV2ray.parseFromURL(config.rawUri);
+      final baseJson = parser.getFullConfiguration();
+      final map = jsonDecode(baseJson) as Map<String, dynamic>;
+
+      // ⭐ ۱. اضافه کردن sockopt.mark به outbound اصلی
+      final outbounds = map['outbounds'] as List?;
+      if (outbounds != null) {
+        for (var ob in outbounds) {
+          if (ob is Map<String, dynamic>) {
+            final tag = ob['tag']?.toString() ?? '';
+            // فقط به outbound اصلی mark اضافه کن (نه direct/block)
+            if (tag != 'direct' && tag != 'block' && tag != 'dns_out') {
+              ob['streamSettings'] ??= <String, dynamic>{};
+              final ss = ob['streamSettings'] as Map<String, dynamic>;
+              ss['sockopt'] = {
+                'mark': 255,  // ⭐ کلید ماجرا
+                'tcpFastOpen': true,
+                'tcpNoDelay': true,
+              };
+            }
+          }
+        }
+      }
+
+      // ⭐ ۲. اضافه کردن DNS
+      map['dns'] = {
+        'servers': ['1.1.1.1', '8.8.8.8'],
+        'tag': 'dns_inbound',
+      };
+
+      // ⭐ ۳. اضافه کردن routing با mark rule
+      map['routing'] = {
+        'domainStrategy': 'IPIfNonMatch',
+        'rules': [
+          // DNS traffic مستقیم (نه از پروکسی)
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'port': '53',
+          },
+          // ترافیک mark=255 مستقیم (جلوگیری از loop)
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'inboundTag': ['mark'],
+          },
+          // private IPs مستقیم
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'ip': ['geoip:private'],
+          },
+        ],
+      };
+
+      // ⭐ ۴. log
+      map['log'] = {'loglevel': 'warning'};
+
+      return jsonEncode(map);
+    } catch (e) {
+      _logs.add(LogLevel.error, 'Config prep fail: $e');
+      // برگشت به config اصلی
+      try {
+        return FlutterV2ray.parseFromURL(config.rawUri).getFullConfiguration();
+      } catch (_) {
+        return config.rawUri;
+      }
     }
   }
 
@@ -63,27 +134,24 @@ class VpnService {
     _lastError = null;
 
     try {
-      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} @ ${config.host}');
+      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort}');
 
-      // ۱. پارس کردن لینک اشتراک
-      final V2RayURL parser = V2ray.parseFromURL(config.rawUri);
-      final String fullConfig = parser.getFullConfiguration();
+      // ⭐ استفاده از config آماده شده با sockopt
+      final finalConfig = _prepareConfig(config);
 
-      // ۲. درخواست مجوز VPN
-      final bool permitted = await _v2ray.requestPermission();
+      final permitted = await _v2ray.requestPermission();
       if (!permitted) throw Exception('دسترسی VPN رد شد');
 
-      // ۳. شروع V2Ray در حالت TUN (VPN کامل)
       await _v2ray.startV2Ray(
         remark: config.name,
-        config: fullConfig,
-        proxyOnly: false, // false = TUN mode (VPN کامل)
+        config: finalConfig,
+        proxyOnly: false,
       );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected via Xray (TUN)');
+      await _logs.add(LogLevel.success, '✅ Connected with sockopt.mark');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
@@ -103,7 +171,6 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
-    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
