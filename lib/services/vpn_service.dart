@@ -1,6 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
-import 'package:flutter_v2ray/flutter_v2ray.dart';
+import 'package:flutter_singbox_client/flutter_singbox_client.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
@@ -9,7 +8,7 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  late FlutterV2ray _v2ray;
+  final SingboxClient _client = SingboxClient();
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -18,6 +17,7 @@ class VpnService {
   final _durationCtrl = StreamController<Duration>.broadcast();
   Timer? _timer;
   Duration _duration = Duration.zero;
+  final List<StreamSubscription> _subs = [];
 
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
@@ -28,101 +28,21 @@ class VpnService {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  VpnService() {
-    _v2ray = FlutterV2ray(
-      onStatusChanged: (status) {
-        final s = status.state.toLowerCase();
-        if (s.contains('connect') && !s.contains('disconnect')) {
-          _status = VpnStatus.connected;
-          _statusCtrl.add(_status);
-        } else if (s.contains('disconnect')) {
-          _status = VpnStatus.disconnected;
-          _statusCtrl.add(_status);
-        }
-      },
-    );
-  }
-
+  /// مقداردهی اولیه هسته Sing-box (فقط یک بار در کل عمر برنامه)
   Future<void> initialize() async {
     try {
-      await _v2ray.initializeV2Ray();
-      await _logs.add(LogLevel.info, 'V2Ray initialized');
+      // طبق مستندات، چندین بار صدا زدن بی‌خطر است
+      await _client.initialize();
+      await _logs.add(LogLevel.info, 'Sing-box core initialized');
+
+      // گوش دادن به خطاهای هسته (طبق best-practices پلاگین)
+      _subs.add(_client.faultStream.listen((msg) {
+        _lastError = msg;
+        _logs.add(LogLevel.error, 'Core fault: $msg');
+      }));
     } catch (e) {
       _lastError = e.toString();
-    }
-  }
-
-  /// ⭐ این متد config رو بازنویسی می‌کنه تا sockopt.mark اضافه کنه
-  /// بدون mark، ترافیک خروجی خود V2Ray هم از تونل رد می‌شه و loop می‌شه
-  String _prepareConfig(VpnConfig config) {
-    try {
-      final parser = FlutterV2ray.parseFromURL(config.rawUri);
-      final baseJson = parser.getFullConfiguration();
-      final map = jsonDecode(baseJson) as Map<String, dynamic>;
-
-      // ⭐ ۱. اضافه کردن sockopt.mark به outbound اصلی
-      final outbounds = map['outbounds'] as List?;
-      if (outbounds != null) {
-        for (var ob in outbounds) {
-          if (ob is Map<String, dynamic>) {
-            final tag = ob['tag']?.toString() ?? '';
-            // فقط به outbound اصلی mark اضافه کن (نه direct/block)
-            if (tag != 'direct' && tag != 'block' && tag != 'dns_out') {
-              ob['streamSettings'] ??= <String, dynamic>{};
-              final ss = ob['streamSettings'] as Map<String, dynamic>;
-              ss['sockopt'] = {
-                'mark': 255,  // ⭐ کلید ماجرا
-                'tcpFastOpen': true,
-                'tcpNoDelay': true,
-              };
-            }
-          }
-        }
-      }
-
-      // ⭐ ۲. اضافه کردن DNS
-      map['dns'] = {
-        'servers': ['1.1.1.1', '8.8.8.8'],
-        'tag': 'dns_inbound',
-      };
-
-      // ⭐ ۳. اضافه کردن routing با mark rule
-      map['routing'] = {
-        'domainStrategy': 'IPIfNonMatch',
-        'rules': [
-          // DNS traffic مستقیم (نه از پروکسی)
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'port': '53',
-          },
-          // ترافیک mark=255 مستقیم (جلوگیری از loop)
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'inboundTag': ['mark'],
-          },
-          // private IPs مستقیم
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'ip': ['geoip:private'],
-          },
-        ],
-      };
-
-      // ⭐ ۴. log
-      map['log'] = {'loglevel': 'warning'};
-
-      return jsonEncode(map);
-    } catch (e) {
-      _logs.add(LogLevel.error, 'Config prep fail: $e');
-      // برگشت به config اصلی
-      try {
-        return FlutterV2ray.parseFromURL(config.rawUri).getFullConfiguration();
-      } catch (_) {
-        return config.rawUri;
-      }
+      await _logs.add(LogLevel.error, 'Init failed: $e');
     }
   }
 
@@ -134,30 +54,39 @@ class VpnService {
     _lastError = null;
 
     try {
-      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'Validating config: ${config.protocolShort}');
 
-      // ⭐ استفاده از config آماده شده با sockopt
-      final finalConfig = _prepareConfig(config);
+      // ۱. اعتبارسنجی کانفیگ قبل از اتصال (طبق best-practices)
+      await _client.checkConfig(config.rawUri);
+      await _logs.add(LogLevel.info, 'Config is valid');
 
-      final permitted = await _v2ray.requestPermission();
-      if (!permitted) throw Exception('دسترسی VPN رد شد');
+      // ۲. درخواست مجوز VPN
+      final permitted = await _client.requestVPNPermission();
+      if (!permitted) throw Exception('VPN permission denied');
 
-      await _v2ray.startV2Ray(
-        remark: config.name,
-        config: finalConfig,
-        proxyOnly: false,
-      );
+      // ۳. اتصال در حالت VPN (TUN) با تنظیمات پیشرفته
+      await _client.connect(SessionOptions(
+        config: config.rawUri,
+        networkMode: NetworkMode.vpn, // حالت تونل کامل
+        killSwitch: false, // در صورت نیاز true کنید
+        notification: const NotificationConfig(
+          title: 'PARSAVIP',
+          showTrafficStats: true,
+          showStopButton: true,
+          stopButtonLabel: 'Disconnect',
+        ),
+      ));
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected with sockopt.mark');
+      await _logs.add(LogLevel.success, '✅ Connected via Sing-box (TUN)');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, '❌ $e');
+      await _logs.add(LogLevel.error, '❌ Connect failed: $e');
       return false;
     }
   }
@@ -166,11 +95,14 @@ class VpnService {
     if (!isConnected) return;
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
-    try { _v2ray.stopV2Ray(); } catch (_) {}
+    try {
+      await _client.disconnect();
+    } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
+    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
@@ -196,6 +128,9 @@ class VpnService {
 
   void dispose() {
     _timer?.cancel();
+    for (final sub in _subs) {
+      sub.cancel();
+    }
     _statusCtrl.close();
     _durationCtrl.close();
   }
