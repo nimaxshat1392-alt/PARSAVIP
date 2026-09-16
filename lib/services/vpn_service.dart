@@ -46,51 +46,45 @@ class VpnService {
   Future<void> initialize() async {
     try {
       await _v2ray.initializeV2Ray();
-      await _logs.add(LogLevel.info, 'V2Ray initialized');
+      await _logs.add(LogLevel.info, 'V2Ray init OK');
     } catch (e) {
       _lastError = e.toString();
       await _logs.add(LogLevel.error, 'Init failed: $e');
     }
   }
 
-  /// تبدیل URI به JSON با تزریق DNS و routing درست
+  /// ساخت config کامل با TUN + DNS + routing
   String _buildConfig(String uri) {
     try {
       final parser = FlutterV2ray.parseFromURL(uri);
       final baseConfig = parser.getFullConfiguration();
       final configMap = jsonDecode(baseConfig) as Map<String, dynamic>;
 
-      // ✅ تزریق DNS
+      // ✅ Log کن که ببینیم چی هست
+      _logs.add(LogLevel.info, 'Config keys: ${configMap.keys.join(",")}');
+
+      // ✅ DNS
       configMap['dns'] = {
-        'servers': [
-          '1.1.1.1',
-          '8.8.8.8',
-          '9.9.9.9',
-          '1.0.0.1'
-        ],
+        'servers': ['1.1.1.1', '8.8.8.8', '1.0.0.1'],
         'queryStrategy': 'UseIP',
         'disableCache': false,
-        'disableFallback': false,
       };
 
-      // ✅ تنظیم routing
+      // ✅ routing - همه چیز به پروکسی
       configMap['routing'] = {
         'domainStrategy': 'IPIfNonMatch',
         'rules': [
           {
             'type': 'field',
             'outboundTag': 'direct',
-            'domain': ['geosite:private', 'geosite:category-ir']
+            'ip': ['geoip:private'],
+            'domain': ['geosite:private']
           },
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'ip': ['geoip:private', 'geoip:ir']
-          }
-        ]
+        ],
+        'final': 'proxy',
       };
 
-      // ✅ اضافه کردن sniffing به inbound
+      // ✅ sniffing به inbound
       final inbounds = configMap['inbounds'] as List?;
       if (inbounds != null) {
         for (var inb in inbounds) {
@@ -98,15 +92,17 @@ class VpnService {
             inb['sniffing'] = {
               'enabled': true,
               'destOverride': ['http', 'tls', 'quic'],
-              'routeOnly': false
+              'routeOnly': true,
             };
           }
         }
       }
 
-      return jsonEncode(configMap);
+      final finalConfig = jsonEncode(configMap);
+      _logs.add(LogLevel.info, 'Config built OK');
+      return finalConfig;
     } catch (e) {
-      // اگه خطا داد، به config خام برگرد
+      _logs.add(LogLevel.error, 'buildConfig fail: $e');
       return FlutterV2ray.parseFromURL(uri).getFullConfiguration();
     }
   }
@@ -119,17 +115,12 @@ class VpnService {
     _lastError = null;
 
     try {
-      await _logs.add(LogLevel.info, 'Parsing: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} ${config.host}');
 
-      // ✅ ساخت config با DNS و routing
       final fullConfig = _buildConfig(config.rawUri);
 
-      await _logs.add(LogLevel.info, 'Config ready');
-
       final permitted = await _v2ray.requestPermission();
-      if (!permitted) throw Exception('دسترسی VPN رد شد');
-
-      await _logs.add(LogLevel.info, 'Starting V2Ray...');
+      if (!permitted) throw Exception('VPN permission denied');
 
       await _v2ray.startV2Ray(
         remark: config.name,
@@ -140,7 +131,7 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, 'Connected with DNS');
+      await _logs.add(LogLevel.success, 'Connected');
       return true;
     } catch (e) {
       _lastError = e.toString();
