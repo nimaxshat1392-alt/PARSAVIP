@@ -20,15 +20,24 @@ android {
 
     defaultConfig {
         applicationId = "com.parsavip.app"
-        minSdk = 21
+        minSdk = 23
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+        multiDexEnabled = true
     }
 
     buildTypes {
         release {
             signingConfig = signingConfigs.debug
+            minifyEnabled = false
+            shrinkResources = false
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }
