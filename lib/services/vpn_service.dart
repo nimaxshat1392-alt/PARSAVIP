@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'package:flutter_v2ray/flutter_v2ray.dart';
 import '../models/vpn_config.dart';
@@ -12,6 +13,8 @@ class VpnService {
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
+  String _socksPort = '10808';
+  String _httpPort = '10809';
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
@@ -21,6 +24,8 @@ class VpnService {
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
   String? get lastError => _lastError;
+  String get socksPort => _socksPort;
+  String get httpPort => _httpPort;
   Stream<VpnStatus> get statusStream => _statusCtrl.stream;
   Stream<Duration> get durationStream => _durationCtrl.stream;
   Duration get duration => _duration;
@@ -45,7 +50,7 @@ class VpnService {
   Future<void> initialize() async {
     try {
       await _v2ray.initializeV2Ray();
-      await _logs.add(LogLevel.info, 'V2Ray initialized');
+      await _logs.add(LogLevel.info, 'V2Ray init OK');
     } catch (e) {
       _lastError = e.toString();
     }
@@ -59,32 +64,31 @@ class VpnService {
     _lastError = null;
 
     try {
-      // ✅ چک کن اگه Reality داره
-      if (config.rawUri.contains('security=reality') ||
-          config.rawUri.contains('security%3Dreality')) {
-        throw Exception(
-            'این کانفیگ از Reality استفاده می‌کند که با این نسخه سازگار نیست.\n'
-            'لطفاً کانفیگ دیگری انتخاب کنید.');
+      if (config.rawUri.contains('security=reality')) {
+        throw Exception('کانفیگ Reality پشتیبانی نمی‌شود');
       }
 
-      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} @ ${config.host}');
+      await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort}');
 
       final parser = FlutterV2ray.parseFromURL(config.rawUri);
-      final fullConfig = parser.getFullConfiguration();
+      final json = parser.getFullConfiguration();
 
       final permitted = await _v2ray.requestPermission();
-      if (!permitted) throw Exception('دسترسی VPN رد شد');
+      if (!permitted) throw Exception('دسترسی رد شد');
 
+      // ✅ proxyOnly = true → حالت پروکسی SOCKS5
       await _v2ray.startV2Ray(
         remark: config.name,
-        config: fullConfig,
-        proxyOnly: false,
+        config: json,
+        proxyOnly: true,   // ← این خط کلیدیه
       );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected');
+      await _logs.add(LogLevel.success, '✅ پروکسی فعال شد');
+      await _logs.add(LogLevel.info, 'SOCKS5: 127.0.0.1:$_socksPort');
+      await _logs.add(LogLevel.info, 'HTTP: 127.0.0.1:$_httpPort');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
