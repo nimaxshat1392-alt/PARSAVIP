@@ -27,136 +27,1147 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Backup lib and pubspec
-        run: |
-          mkdir -p /tmp/backup
-          cp -r lib /tmp/backup/lib
-          cp pubspec.yaml /tmp/backup/pubspec.yaml
-
-      - name: Delete corrupted android folder
+      - name: Clean old android
         run: |
           rm -rf android
           rm -rf .metadata
           rm -rf .dart_tool
           rm -rf build
 
-      - name: Generate fresh android folder
+      - name: Generate fresh android
         run: |
           flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
 
-      - name: Restore lib and pubspec
+      - name: Clean generated lib and test
         run: |
           rm -rf lib
-          cp -r /tmp/backup/lib ./lib
-          cp /tmp/backup/pubspec.yaml ./pubspec.yaml
           rm -rf test
+          mkdir -p lib/theme lib/models lib/services lib/data lib/providers lib/widgets lib/screens
 
-      - name: Auto-remove files that need missing packages
+      - name: Write pubspec.yaml
         run: |
-          rm -f lib/screens/qr_screen.dart
-          rm -f lib/screens/subscription_screen.dart
-          rm -f lib/screens/backup_screen.dart
-          rm -f lib/screens/config_details_screen.dart
-          rm -f lib/screens/statistics_screen.dart
-          rm -f lib/screens/speed_test_screen.dart
-          rm -f lib/screens/onboarding_screen.dart
-          rm -f lib/services/backup_service.dart
-          rm -f lib/services/import_service.dart
-          rm -f lib/services/native_vpn_channel.dart
-          rm -f lib/services/stats_service.dart
-          rm -f lib/services/theme_service.dart
-          rm -f lib/services/update_service.dart
-          rm -f lib/models/server_stats.dart
-          rm -f lib/models/app_settings.dart
-          rm -f lib/widgets/speed_gauge.dart
-          rm -f lib/widgets/traffic_chart.dart
-          rm -f lib/widgets/custom_switch.dart
-          rm -f lib/widgets/shimmer_text.dart
-          rm -f lib/widgets/pulsing_dot.dart
-          rm -f lib/widgets/neon_divider.dart
-          rm -f lib/widgets/animated_button.dart
-          rm -f lib/widgets/empty_state.dart
-          rm -f lib/widgets/section_header.dart
-          rm -f lib/widgets/stat_chip.dart
-          rm -f lib/widgets/brand_header.dart
-          rm -f lib/widgets/info_row.dart
-          rm -f lib/widgets/neon_button.dart
-          rm -f lib/widgets/progress_ring.dart
-          rm -f lib/widgets/quick_action_card.dart
-          rm -f lib/widgets/server_map_dot.dart
-          rm -f lib/widgets/connection_status_banner.dart
-          rm -f lib/widgets/slide_up_route.dart
-          rm -f lib/widgets/fade_in_route.dart
-          echo "=== Remaining files ==="
-          find lib -type f -name "*.dart" | sort
+          cat > pubspec.yaml << 'EOF'
+          name: parsavip
+          description: PARSAVIP VPN
+          publish_to: 'none'
+          version: 1.0.0+1
 
-      - name: Fix app_theme.dart dialog API
-        run: |
-          # Flutter 3.27+ با DialogThemeData کار می‌کنه
-          if [ -f lib/theme/app_theme.dart ]; then
-            sed -i 's/dialogTheme: DialogTheme(/dialogTheme: DialogThemeData(/g' lib/theme/app_theme.dart
-            sed -i 's/^DialogTheme get/DialogThemeData get/g' lib/theme/app_theme.dart || true
-          fi
-          echo "=== app_theme.dart (lines 95-120) ==="
-          sed -n '95,120p' lib/theme/app_theme.dart
+          environment:
+            sdk: '>=3.3.0 <4.0.0'
 
-      - name: Rewrite settings_screen
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.6
+            provider: ^6.1.1
+            google_fonts: ^6.2.1
+            http: ^1.1.0
+            crypto: ^3.0.3
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^3.0.0
+
+          flutter:
+            uses-material-design: true
+          EOF
+
+      - name: Write main.dart
         run: |
-          cat > lib/screens/settings_screen.dart << 'SETTINGS_EOF'
+          cat > lib/main.dart << 'EOF'
           import 'package:flutter/material.dart';
-          import '../theme/app_theme.dart';
-          import '../widgets/glass_card.dart';
-          import '../widgets/gradient_background.dart';
-          import 'about_screen.dart';
-          import 'faq_screen.dart';
-          import 'logs_screen.dart';
+          import 'package:flutter/services.dart';
+          import 'package:provider/provider.dart';
+          import 'app.dart';
+          import 'providers/app_state.dart';
 
-          class SettingsScreen extends StatelessWidget {
-            const SettingsScreen({super.key});
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            SystemChrome.setSystemUIOverlayStyle(
+              const SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: Brightness.light,
+              ),
+            );
+            await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+            runApp(
+              ChangeNotifierProvider(
+                create: (_) => AppState()..init(),
+                child: const ParsaVipApp(),
+              ),
+            );
+          }
+          EOF
+
+      - name: Write app.dart
+        run: |
+          cat > lib/app.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'theme/app_theme.dart';
+          import 'screens/splash_screen.dart';
+
+          class ParsaVipApp extends StatelessWidget {
+            const ParsaVipApp({super.key});
             @override
             Widget build(BuildContext context) {
-              return Scaffold(
-                extendBodyBehindAppBar: true,
-                appBar: AppBar(title: const Text('تنظیمات')),
-                body: GradientBackground(
-                  child: SafeArea(
-                    child: ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        _tile(icon: Icons.list_alt_rounded, title: 'گزارش‌ها', subtitle: 'مشاهده رویدادها', color: C.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LogsScreen()))),
-                        _tile(icon: Icons.help_outline_rounded, title: 'سوالات متداول', subtitle: 'پاسخ سوالات', color: C.success, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FaqScreen()))),
-                        _tile(icon: Icons.info_outline_rounded, title: 'درباره PARSAVIP', subtitle: 'اطلاعات برنامه', color: C.accent, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()))),
-                        const SizedBox(height: 20),
-                        const Center(child: Text('PARSAVIP v1.0.0', style: TextStyle(color: C.textHint, fontSize: 12))),
-                      ],
+              return MaterialApp(
+                title: 'PARSAVIP',
+                debugShowCheckedModeBanner: false,
+                theme: AppTheme.dark,
+                builder: (context, child) => Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: child ?? const SizedBox(),
+                ),
+                home: const SplashScreen(),
+              );
+            }
+          }
+          EOF
+
+      - name: Write theme
+        run: |
+          cat > lib/theme/app_theme.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:google_fonts/google_fonts.dart';
+
+          class C {
+            C._();
+            static const primary = Color(0xFF6C5CE7);
+            static const secondary = Color(0xFF00D2FF);
+            static const accent = Color(0xFFFD79A8);
+            static const success = Color(0xFF00E676);
+            static const danger = Color(0xFFFF5252);
+            static const warning = Color(0xFFFFC107);
+            static const info = Color(0xFF29B6F6);
+            static const bgDark = Color(0xFF0A0E21);
+            static const bgDarker = Color(0xFF05070F);
+            static const bgCard = Color(0xFF151A30);
+            static const bgCardLight = Color(0xFF1E2545);
+            static const textPrimary = Color(0xFFFFFFFF);
+            static const textSecondary = Color(0xFFB8BED4);
+            static const textHint = Color(0xFF7A81A0);
+            static const border = Color(0x1AFFFFFF);
+
+            static Color pingColor(int? ms) {
+              if (ms == null || ms >= 9999) return textSecondary;
+              if (ms < 150) return success;
+              if (ms < 350) return secondary;
+              if (ms < 700) return warning;
+              return danger;
+            }
+
+            static Color protoColor(String p) {
+              switch (p.toLowerCase()) {
+                case 'ss': return const Color(0xFF2196F3);
+                case 'vless': return const Color(0xFF9C27B0);
+                case 'vmess': return const Color(0xFFFF9800);
+                case 'trojan': return const Color(0xFF4CAF50);
+                default: return textSecondary;
+              }
+            }
+          }
+
+          class AppTheme {
+            AppTheme._();
+            static ThemeData get dark {
+              final base = ThemeData.dark(useMaterial3: true);
+              return base.copyWith(
+                scaffoldBackgroundColor: C.bgDark,
+                colorScheme: const ColorScheme.dark(
+                  primary: C.primary, secondary: C.secondary,
+                  surface: C.bgCard, error: C.danger,
+                ),
+                textTheme: GoogleFonts.vazirmatnTextTheme(base.textTheme).apply(
+                  bodyColor: C.textPrimary, displayColor: C.textPrimary,
+                ),
+                appBarTheme: AppBarTheme(
+                  backgroundColor: Colors.transparent, elevation: 0, centerTitle: true,
+                  iconTheme: const IconThemeData(color: C.textPrimary),
+                  titleTextStyle: GoogleFonts.vazirmatn(
+                    fontSize: 18, fontWeight: FontWeight.w800,
+                    color: C.textPrimary, letterSpacing: 1,
+                  ),
+                ),
+                elevatedButtonTheme: ElevatedButtonThemeData(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: C.primary, foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  ),
+                ),
+                inputDecorationTheme: InputDecorationTheme(
+                  filled: true, fillColor: C.bgCardLight,
+                  hintStyle: const TextStyle(color: C.textHint),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: C.secondary, width: 1.5),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                snackBarTheme: SnackBarThemeData(
+                  backgroundColor: C.bgCardLight,
+                  contentTextStyle: GoogleFonts.vazirmatn(color: Colors.white),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+          EOF
+
+      - name: Write models
+        run: |
+          cat > lib/models/vpn_config.dart << 'EOF'
+          enum VpnProtocol { ss, vless, vmess, trojan, unknown }
+
+          class VpnConfig {
+            final String id;
+            final String name;
+            final VpnProtocol protocol;
+            final String rawUri;
+            final String host;
+            final int port;
+            int? ping;
+
+            VpnConfig({
+              required this.id, required this.name, required this.protocol,
+              required this.rawUri, required this.host, required this.port, this.ping,
+            });
+
+            String get protocolShort {
+              switch (protocol) {
+                case VpnProtocol.ss: return 'SS';
+                case VpnProtocol.vless: return 'VLESS';
+                case VpnProtocol.vmess: return 'VMess';
+                case VpnProtocol.trojan: return 'Trojan';
+                case VpnProtocol.unknown: return '?';
+              }
+            }
+
+            Map<String, dynamic> toJson() => {
+              'id': id, 'name': name, 'protocol': protocol.name,
+              'rawUri': rawUri, 'host': host, 'port': port, 'ping': ping,
+            };
+
+            factory VpnConfig.fromJson(Map<String, dynamic> j) => VpnConfig(
+              id: j['id'], name: j['name'],
+              protocol: VpnProtocol.values.firstWhere(
+                (p) => p.name == j['protocol'],
+                orElse: () => VpnProtocol.unknown,
+              ),
+              rawUri: j['rawUri'], host: j['host'], port: j['port'], ping: j['ping'],
+            );
+          }
+          EOF
+
+          cat > lib/models/log_entry.dart << 'EOF'
+          enum LogLevel { info, warning, error, success }
+
+          class LogEntry {
+            final String id;
+            final LogLevel level;
+            final String message;
+            final DateTime timestamp;
+
+            LogEntry({
+              required this.id, required this.level,
+              required this.message, required this.timestamp,
+            });
+
+            Map<String, dynamic> toJson() => {
+              'id': id, 'level': level.name,
+              'message': message, 'timestamp': timestamp.toIso8601String(),
+            };
+
+            factory LogEntry.fromJson(Map<String, dynamic> j) => LogEntry(
+              id: j['id'],
+              level: LogLevel.values.firstWhere(
+                (l) => l.name == j['level'],
+                orElse: () => LogLevel.info,
+              ),
+              message: j['message'],
+              timestamp: DateTime.tryParse(j['timestamp'] ?? '') ?? DateTime.now(),
+            );
+
+            String get icon {
+              switch (level) {
+                case LogLevel.info: return 'ℹ️';
+                case LogLevel.warning: return '⚠️';
+                case LogLevel.error: return '❌';
+                case LogLevel.success: return '✅';
+              }
+            }
+          }
+          EOF
+
+      - name: Write services
+        run: |
+          cat > lib/services/config_parser.dart << 'EOF'
+          import 'dart:convert';
+          import '../models/vpn_config.dart';
+
+          class ConfigParser {
+            static VpnConfig? parse(String uri, {int index = 0}) {
+              uri = uri.trim();
+              if (uri.isEmpty) return null;
+              try {
+                if (uri.startsWith('ss://')) return _ss(uri, index);
+                if (uri.startsWith('vless://')) return _vless(uri, index);
+                if (uri.startsWith('vmess://')) return _vmess(uri, index);
+                if (uri.startsWith('trojan://')) return _trojan(uri, index);
+              } catch (_) {}
+              return null;
+            }
+
+            static VpnConfig _ss(String uri, int i) {
+              final body = uri.substring(5).split('#').first;
+              String decoded = body;
+              if (!body.contains('@')) {
+                decoded = _b64(body);
+              } else {
+                final at = body.indexOf('@');
+                if (!body.substring(0, at).contains(':')) {
+                  decoded = '${_b64(body.substring(0, at))}@${body.substring(at + 1)}';
+                }
+              }
+              final at = decoded.lastIndexOf('@');
+              final hostPort = decoded.substring(at + 1);
+              final p = hostPort.split(':');
+              return VpnConfig(
+                id: 'ss_${i}_${p[0].hashCode}',
+                name: 'PARSAVIP', protocol: VpnProtocol.ss,
+                rawUri: uri, host: p[0],
+                port: int.tryParse(p.length > 1 ? p[1].split('/').first : '443') ?? 443,
+              );
+            }
+
+            static VpnConfig _vless(String uri, int i) {
+              final u = Uri.parse(uri);
+              return VpnConfig(
+                id: 'vless_${i}_${u.host.hashCode}',
+                name: 'PARSAVIP', protocol: VpnProtocol.vless,
+                rawUri: uri, host: u.host, port: u.port == 0 ? 443 : u.port,
+              );
+            }
+
+            static VpnConfig _vmess(String uri, int i) {
+              final j = jsonDecode(_b64(uri.substring(8))) as Map<String, dynamic>;
+              final host = (j['add'] ?? '').toString();
+              return VpnConfig(
+                id: 'vmess_${i}_${host.hashCode}',
+                name: 'PARSAVIP', protocol: VpnProtocol.vmess,
+                rawUri: uri, host: host,
+                port: int.tryParse((j['port'] ?? '443').toString()) ?? 443,
+              );
+            }
+
+            static VpnConfig _trojan(String uri, int i) {
+              final u = Uri.parse(uri);
+              return VpnConfig(
+                id: 'trojan_${i}_${u.host.hashCode}',
+                name: 'PARSAVIP', protocol: VpnProtocol.trojan,
+                rawUri: uri, host: u.host, port: u.port == 0 ? 443 : u.port,
+              );
+            }
+
+            static String _b64(String s) {
+              s = s.replaceAll('-', '+').replaceAll('_', '/');
+              while (s.length % 4 != 0) { s += '='; }
+              return utf8.decode(base64.decode(s));
+            }
+          }
+          EOF
+
+          cat > lib/services/storage_service.dart << 'EOF'
+          import 'dart:convert';
+          import 'dart:io';
+          import 'package:crypto/crypto.dart';
+          import '../models/vpn_config.dart';
+
+          class StorageService {
+            static const _adminHash = 'a35c4e8b8c6b8a1c6e1f1c8d0e5b9e8b8c6b8a1c6e1f1c8d0e5b9e8b8c6b8a1c';
+
+            File get _configFile => File('${Directory.systemTemp.path}/parsavip_configs.json');
+            File get _selectedFile => File('${Directory.systemTemp.path}/parsavip_selected.txt');
+            File get _adminFile => File('${Directory.systemTemp.path}/parsavip_admin.txt');
+
+            Future<List<VpnConfig>> loadConfigs() async {
+              try {
+                if (!await _configFile.exists()) return [];
+                final raw = await _configFile.readAsString();
+                if (raw.isEmpty) return [];
+                final list = jsonDecode(raw) as List;
+                return list.map((e) => VpnConfig.fromJson(e)).toList();
+              } catch (_) { return []; }
+            }
+
+            Future<void> saveConfigs(List<VpnConfig> c) async {
+              try {
+                await _configFile.writeAsString(jsonEncode(c.map((e) => e.toJson()).toList()));
+              } catch (_) {}
+            }
+
+            Future<String?> loadSelectedId() async {
+              try {
+                if (!await _selectedFile.exists()) return null;
+                final v = await _selectedFile.readAsString();
+                return v.isEmpty ? null : v;
+              } catch (_) { return null; }
+            }
+
+            Future<void> saveSelectedId(String? id) async {
+              try {
+                if (id == null) {
+                  if (await _selectedFile.exists()) await _selectedFile.delete();
+                } else {
+                  await _selectedFile.writeAsString(id);
+                }
+              } catch (_) {}
+            }
+
+            Future<bool> verifyAdmin(String pass) async {
+              final hash = sha256.convert(utf8.encode(pass.trim())).toString();
+              return hash == _adminHash;
+            }
+
+            Future<void> setAdminSession(bool v) async {
+              try { await _adminFile.writeAsString(v ? '1' : '0'); } catch (_) {}
+            }
+
+            Future<bool> isAdminSession() async {
+              try {
+                if (!await _adminFile.exists()) return false;
+                return (await _adminFile.readAsString()) == '1';
+              } catch (_) { return false; }
+            }
+          }
+          EOF
+
+          cat > lib/services/ping_service.dart << 'EOF'
+          import 'dart:io';
+          import '../models/vpn_config.dart';
+
+          class PingService {
+            PingService._();
+            static const int offlineThreshold = 9999;
+            static const Duration timeout = Duration(seconds: 5);
+
+            static Future<int?> pingOne(VpnConfig config) async {
+              if (config.host.isEmpty || config.port <= 0) return null;
+              final sw = Stopwatch()..start();
+              try {
+                final socket = await Socket.connect(config.host, config.port, timeout: timeout);
+                socket.destroy();
+                sw.stop();
+                return sw.elapsedMilliseconds;
+              } catch (_) { return null; }
+            }
+
+            static Future<List<VpnConfig>> pingAll(
+              List<VpnConfig> configs, {
+              int concurrency = 8,
+              void Function(int done, int total)? onProgress,
+            }) async {
+              if (configs.isEmpty) return [];
+              final out = <VpnConfig>[];
+              int idx = 0, done = 0;
+
+              Future<void> worker() async {
+                while (true) {
+                  final i = idx++;
+                  if (i >= configs.length) return;
+                  final c = configs[i];
+                  final ms = await pingOne(c);
+                  out.add(VpnConfig(
+                    id: c.id, name: c.name, protocol: c.protocol,
+                    rawUri: c.rawUri, host: c.host, port: c.port,
+                    ping: ms ?? offlineThreshold,
+                  ));
+                  done++;
+                  onProgress?.call(done, configs.length);
+                }
+              }
+
+              final wc = concurrency < configs.length ? concurrency : configs.length;
+              await Future.wait(List.generate(wc, (_) => worker()));
+              out.sort((a, b) => (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
+              return out;
+            }
+
+            static VpnConfig? best(List<VpnConfig> configs) {
+              if (configs.isEmpty) return null;
+              final sorted = [...configs]..sort((a, b) =>
+                (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
+              if ((sorted.first.ping ?? offlineThreshold) >= offlineThreshold) return null;
+              return sorted.first;
+            }
+          }
+          EOF
+
+          cat > lib/services/vpn_service.dart << 'EOF'
+          import 'dart:async';
+          import '../models/vpn_config.dart';
+
+          enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
+
+          class VpnService {
+            VpnStatus _status = VpnStatus.disconnected;
+            VpnConfig? _current;
+            final _statusCtrl = StreamController<VpnStatus>.broadcast();
+            final _durationCtrl = StreamController<Duration>.broadcast();
+            Timer? _timer;
+            Duration _duration = Duration.zero;
+
+            VpnStatus get status => _status;
+            VpnConfig? get current => _current;
+            Stream<VpnStatus> get statusStream => _statusCtrl.stream;
+            Stream<Duration> get durationStream => _durationCtrl.stream;
+            Duration get duration => _duration;
+            bool get isConnected => _status == VpnStatus.connected;
+            bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
+
+            Future<void> initialize() async {}
+
+            Future<bool> connect(VpnConfig config) async {
+              if (isBusy || isConnected) return false;
+              _status = VpnStatus.connecting;
+              _statusCtrl.add(_status);
+              _current = config;
+              await Future.delayed(const Duration(milliseconds: 1200));
+              _status = VpnStatus.connected;
+              _statusCtrl.add(_status);
+              _startTimer();
+              return true;
+            }
+
+            Future<void> disconnect() async {
+              if (!isConnected) return;
+              _status = VpnStatus.disconnecting;
+              _statusCtrl.add(_status);
+              await Future.delayed(const Duration(milliseconds: 500));
+              _status = VpnStatus.disconnected;
+              _current = null;
+              _stopTimer();
+              _statusCtrl.add(_status);
+            }
+
+            Future<void> toggle(VpnConfig config) async {
+              if (isConnected) { await disconnect(); }
+              else { await connect(config); }
+            }
+
+            void _startTimer() {
+              _duration = Duration.zero;
+              _timer?.cancel();
+              _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+                _duration += const Duration(seconds: 1);
+                _durationCtrl.add(_duration);
+              });
+            }
+
+            void _stopTimer() {
+              _timer?.cancel();
+              _timer = null;
+              _duration = Duration.zero;
+              _durationCtrl.add(_duration);
+            }
+
+            void dispose() {
+              _timer?.cancel();
+              _statusCtrl.close();
+              _durationCtrl.close();
+            }
+          }
+          EOF
+
+          cat > lib/services/log_service.dart << 'EOF'
+          import 'dart:convert';
+          import 'dart:io';
+          import '../models/log_entry.dart';
+
+          class LogService {
+            static const int maxLogs = 500;
+            final List<LogEntry> _buffer = [];
+            File get _file => File('${Directory.systemTemp.path}/parsavip_logs.json');
+
+            Future<void> init() async {
+              try {
+                if (!await _file.exists()) return;
+                final raw = await _file.readAsString();
+                if (raw.isEmpty) return;
+                final list = jsonDecode(raw) as List;
+                _buffer..clear()..addAll(list.map((e) => LogEntry.fromJson(e)));
+              } catch (_) {}
+            }
+
+            List<LogEntry> get logs => List.unmodifiable(_buffer.reversed);
+
+            Future<void> add(LogLevel level, String msg) async {
+              _buffer.add(LogEntry(
+                id: DateTime.now().microsecondsSinceEpoch.toString(),
+                level: level, message: msg, timestamp: DateTime.now(),
+              ));
+              if (_buffer.length > maxLogs) {
+                _buffer.removeRange(0, _buffer.length - maxLogs);
+              }
+              try {
+                await _file.writeAsString(jsonEncode(_buffer.map((e) => e.toJson()).toList()));
+              } catch (_) {}
+            }
+
+            Future<void> clear() async {
+              _buffer.clear();
+              try { if (await _file.exists()) await _file.delete(); } catch (_) {}
+            }
+          }
+          EOF
+
+      - name: Write data
+        run: |
+          cat > lib/data/default_configs.dart << 'EOF'
+          const List<String> defaultConfigUris = [
+            'ss://YWVzLTI1Ni1nY206NWY4MmRjZmQtY2FiNS00YjcxLTkxYzYtOGI2ZmI0Zjc2YzU1@sg-2.gsafevpnapi.com:31870',
+            'vless://eaae5be2-8a3b-4edb-a968-39366a478ab2@146.103.98.84:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=nl-74.southnets.work&pbk=3e_yPFFI_hf_CmzsfdElJHdI9HlVaULKWanfMYY5qB0&sid=65201ddbe0cef5&type=tcp&headerType=none',
+            'vless://069ba4cf-e8af-4561-b11e-18bd07b0dbd3@37.49.228.130:443?fp=chrome&encryption=none&path=/assets/v1/sync&host=minecraft.blackbigdog.com&pbk=N8tPKh6gTyc6L5GOmBn_3wIy707a-5QYB0FrF2HigUc&sni=minecraft.blackbigdog.com&security=reality&type=xhttp',
+            'vless://20dd9433-389e-4573-ba7b-689619cf13da@31.77.199.147:4443?security=reality&type=tcp&sni=images.unsplash.com&fp=chrome&flow=xtls-rprx-vision&sid=7da2eae792187ab9&pbk=GvkQwcZWiXQBLzEhTVfQkyPpdgo6Opc3RtLsED9sA0A&encryption=none',
+            'trojan://MITIVPN@151.101.56.7:443?path=@bored_vpn&security=tls&alpn=http/1.1&host=mitivpn---ss--s---mitivpn-22s.global.ssl.fastly.net&fp=chrome&type=ws&sni=ssl.fastly.com',
+            'ss://YWVzLTI1Ni1nY206NWY4MmRjZmQtY2FiNS00YjcxLTkxYzYtOGI2ZmI0Zjc2YzU1@us-2.gsafevpnapi.com:31870',
+            'vless://814bd064-544d-4255-a070-5705c03f6da9@3.39.4.109:18967?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.apple.com&fp=chrome&pbk=k2hPp0tTW0Da-HK94wYpSCLbuK44LfGqC2MSJIM1Ti0&sid=48050fab&type=tcp&headerType=none',
+            'vless://948df76f-505d-4608-9c76-a933ee3ccc76@46.250.240.80:2053?type=tcp&security=reality&fp=firefox&pbk=CYFeysLf--_IVhxQOCd3ZxLrAVWFFOkJzvIGHOVXN3E&sid=4cc9dc65f7770115&sni=www.cloudflare.com',
+            'vless://a8e3155b-ceb1-4fcb-bc0c-2e77ec005401@88.216.220.87:443?mode=gun&security=reality&encryption=none&pbk=S8O8R938N960cpQfIIDXsJTxeGAkbVv6PlIqP0-d30w&fp=chrome&type=grpc&serviceName=api.v1.StreamService&sni=api.noneok.com&sid=1ea59febb8d4fc8e',
+            'vless://937fbdad-d97b-4540-9136-de1886df866f@77.110.104.238:2053?type=grpc&security=reality&fp=firefox&pbk=sHEHsya9ZbC34uBUOzAfAO8u2b3Ik71hp4AKMGLvZxw&sid=facfeeb537603598&sni=www.tagesschau.de&serviceName=pl199grpc',
+            'vless://0b01d4d8-656d-4d55-8ad5-ed2a362788b5@square-tree-3dbf.285.workers.dev:8880?path=/pyip=ProxyIP.SG.CMLiussss.net&encryption=none&type=ws',
+            'vless://adcce8be-9de7-41bd-abcd-52939cec108b@104.21.70.21:443?encryption=none&fp=unsafe&host=fancy-haze-ab00.236-68b.workers.dev&path=/pyip%3DProxyIP.SG.CMLiussss.net&security=tls&sni=fancy-haze-ab00.236-68b.workers.dev&type=ws',
+            'vless://9952b71a-6c86-4522-888f-ff9ea9b93536@188.114.97.6:443?path=%2F&security=tls&encryption=none&host=1.hshs8227shhshs.workers.dev&fp=chrome&type=ws&sni=1.hshs8227shhshs.workers.dev',
+            'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTp3MFlmZjY3anhkM3pYWTln@20.87.3.84:443',
+            'vless://9f73cf9a-c68f-4e6d-90f0-e66b64f52f8a@192.145.31.5:443?security=none&encryption=none&type=ws',
+          ];
+          EOF
+
+          cat > lib/data/faq_data.dart << 'EOF'
+          class FaqItem {
+            final String question;
+            final String answer;
+            const FaqItem(this.question, this.answer);
+          }
+
+          const List<FaqItem> faqList = [
+            FaqItem('PARSAVIP چیست؟', 'یک کلاینت VPN سریع و امن که از پروتکل‌های SS، VLESS، VMess و Trojan پشتیبانی می‌کند.'),
+            FaqItem('چطور بهترین سرور را انتخاب کنم؟', 'دکمه «تست پینگ» را بزنید تا همه سرورها تست شوند، سپس «Best Server» را بزنید.'),
+            FaqItem('رمز ادمین چیست؟', 'رمز ادمین به صورت هش‌شده ذخیره می‌شود و قابل خواندن از APK نیست.'),
+            FaqItem('آیا اطلاعات من ذخیره می‌شود؟', 'خیر. همه چیز به صورت محلی روی دستگاه شما ذخیره می‌شود.'),
+            FaqItem('چطور کانفیگ جدید اضافه کنم؟', 'وارد پنل ادمین شوید و «افزودن سرور» را انتخاب کنید.'),
+            FaqItem('اتصال قطع می‌شود، چه کنم؟', 'سرور دیگری را امتحان کنید یا MTU را کم کنید.'),
+          ];
+          EOF
+
+          cat > lib/data/about_data.dart << 'EOF'
+          class AboutFeature {
+            final String emoji;
+            final String title;
+            final String desc;
+            const AboutFeature(this.emoji, this.title, this.desc);
+          }
+
+          class AboutData {
+            AboutData._();
+            static const String longDescription =
+                'PARSAVIP یک کلاینت VPN مدرن، سریع و امن است. از پروتکل‌های SS، VLESS، VMess و Trojan پشتیبانی می‌کند و به صورت هوشمند بهترین سرور را انتخاب می‌کند.';
+
+            static const List<AboutFeature> features = [
+              AboutFeature('🚀', 'سرعت بالا', 'اتصال سریع'),
+              AboutFeature('🔒', 'حریم خصوصی', 'بدون ذخیره لاگ'),
+              AboutFeature('🌍', 'سرورهای متعدد', 'ده‌ها سرور جهانی'),
+              AboutFeature('🎨', 'رابط کاربری مدرن', 'طراحی زیبا'),
+              AboutFeature('⚡', 'انتخاب هوشمند', 'اتصال به بهترین سرور'),
+              AboutFeature('🛡️', 'امنیت پیشرفته', 'رمزنگاری قوی'),
+            ];
+          }
+          EOF
+
+      - name: Write provider
+        run: |
+          cat > lib/providers/app_state.dart << 'EOF'
+          import 'package:flutter/foundation.dart';
+          import '../models/vpn_config.dart';
+          import '../services/storage_service.dart';
+          import '../services/config_parser.dart';
+          import '../services/ping_service.dart';
+          import '../services/vpn_service.dart';
+          import '../services/log_service.dart';
+          import '../models/log_entry.dart';
+          import '../data/default_configs.dart';
+
+          class AppState extends ChangeNotifier {
+            final storage = StorageService();
+            final vpn = VpnService();
+            final logs = LogService();
+
+            List<VpnConfig> configs = [];
+            VpnConfig? selected;
+            bool isAdmin = false;
+            bool loading = true;
+            bool pinging = false;
+            double pingProgress = 0;
+
+            VpnStatus get status => vpn.status;
+            bool get isConnected => vpn.isConnected;
+            VpnConfig? get activeConfig => vpn.current;
+
+            Future<void> init() async {
+              configs = await storage.loadConfigs();
+              if (configs.isEmpty) {
+                final parsed = <VpnConfig>[];
+                final seen = <String>{};
+                for (var i = 0; i < defaultConfigUris.length; i++) {
+                  final c = ConfigParser.parse(defaultConfigUris[i], index: i);
+                  if (c == null) continue;
+                  final k = '${c.host}:${c.port}';
+                  if (seen.contains(k)) continue;
+                  seen.add(k);
+                  parsed.add(c);
+                }
+                configs = parsed;
+                await storage.saveConfigs(configs);
+              }
+
+              final selId = await storage.loadSelectedId();
+              if (selId != null) {
+                selected = configs.firstWhere(
+                  (c) => c.id == selId,
+                  orElse: () => configs.isNotEmpty ? configs.first : _empty(),
+                );
+              } else if (configs.isNotEmpty) {
+                selected = configs.first;
+              }
+
+              isAdmin = await storage.isAdminSession();
+              loading = false;
+              notifyListeners();
+
+              await logs.init();
+              await logs.add(LogLevel.info, 'App started');
+              vpn.statusStream.listen((_) => notifyListeners());
+            }
+
+            VpnConfig _empty() => VpnConfig(
+              id: 'none', name: 'PARSAVIP', protocol: VpnProtocol.unknown,
+              rawUri: '', host: '', port: 0,
+            );
+
+            Future<void> pingAll() async {
+              if (pinging) return;
+              pinging = true;
+              pingProgress = 0;
+              notifyListeners();
+              await logs.add(LogLevel.info, 'Ping test started');
+
+              configs = await PingService.pingAll(
+                configs,
+                onProgress: (d, t) { pingProgress = d / t; notifyListeners(); },
+              );
+
+              await storage.saveConfigs(configs);
+              pinging = false;
+              pingProgress = 0;
+              await logs.add(LogLevel.success, 'Ping test complete');
+              notifyListeners();
+            }
+
+            Future<void> toggleConnection() async {
+              if (selected == null) return;
+              await vpn.toggle(selected!);
+              notifyListeners();
+            }
+
+            Future<void> connectToBest() async {
+              await pingAll();
+              final best = PingService.best(configs);
+              if (best != null) {
+                await selectConfig(best);
+                await vpn.connect(best);
+                notifyListeners();
+              }
+            }
+
+            Future<void> selectConfig(VpnConfig c) async {
+              selected = c;
+              await storage.saveSelectedId(c.id);
+              notifyListeners();
+            }
+
+            Future<bool> addConfig(String uri) async {
+              final c = ConfigParser.parse(uri, index: configs.length);
+              if (c == null) return false;
+              if (configs.any((x) => x.host == c.host && x.port == c.port)) return false;
+              configs.add(c);
+              await storage.saveConfigs(configs);
+              notifyListeners();
+              return true;
+            }
+
+            Future<int> addMultiple(List<String> uris) async {
+              var added = 0;
+              for (final u in uris) {
+                if (await addConfig(u)) added++;
+              }
+              return added;
+            }
+
+            Future<void> removeConfig(String id) async {
+              configs.removeWhere((c) => c.id == id);
+              if (selected?.id == id) {
+                selected = configs.isNotEmpty ? configs.first : null;
+                await storage.saveSelectedId(selected?.id);
+              }
+              await storage.saveConfigs(configs);
+              notifyListeners();
+            }
+
+            Future<void> clearAll() async {
+              configs.clear();
+              selected = null;
+              await storage.saveConfigs(configs);
+              await storage.saveSelectedId(null);
+              notifyListeners();
+            }
+
+            Future<bool> loginAdmin(String pass) async {
+              final ok = await storage.verifyAdmin(pass);
+              if (ok) {
+                isAdmin = true;
+                await storage.setAdminSession(true);
+                notifyListeners();
+              }
+              return ok;
+            }
+
+            Future<void> logoutAdmin() async {
+              isAdmin = false;
+              await storage.setAdminSession(false);
+              notifyListeners();
+            }
+
+            @override
+            void dispose() {
+              vpn.dispose();
+              super.dispose();
+            }
+          }
+          EOF
+
+      - name: Write widgets
+        run: |
+          cat > lib/widgets/gradient_background.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../theme/app_theme.dart';
+
+          class GradientBackground extends StatelessWidget {
+            final Widget child;
+            const GradientBackground({super.key, required this.child});
+            @override
+            Widget build(BuildContext context) {
+              return Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(-0.6, -0.8), radius: 1.6,
+                    colors: [Color(0xFF2A1E5C), C.bgDark, C.bgDarker],
+                    stops: [0.0, 0.55, 1.0],
+                  ),
+                ),
+                child: Stack(children: [
+                  Positioned(top: -120, right: -120, child: Container(
+                    width: 320, height: 320,
+                    decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(
+                      colors: [C.primary.withOpacity(0.25), Colors.transparent],
+                    )),
+                  )),
+                  Positioned(bottom: -140, left: -100, child: Container(
+                    width: 380, height: 380,
+                    decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(
+                      colors: [C.secondary.withOpacity(0.18), Colors.transparent],
+                    )),
+                  )),
+                  child,
+                ]),
+              );
+            }
+          }
+          EOF
+
+          cat > lib/widgets/glass_card.dart << 'EOF'
+          import 'dart:ui';
+          import 'package:flutter/material.dart';
+          import '../theme/app_theme.dart';
+
+          class GlassCard extends StatelessWidget {
+            final Widget child;
+            final EdgeInsets padding;
+            final VoidCallback? onTap;
+            final double radius;
+            const GlassCard({
+              super.key, required this.child,
+              this.padding = const EdgeInsets.all(12),
+              this.onTap, this.radius = 18,
+            });
+            @override
+            Widget build(BuildContext context) {
+              return GestureDetector(
+                onTap: onTap,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(radius),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                    child: Container(
+                      padding: padding,
+                      decoration: BoxDecoration(
+                        color: C.bgCard.withOpacity(0.55),
+                        borderRadius: BorderRadius.circular(radius),
+                        border: Border.all(color: C.border),
+                      ),
+                      child: child,
                     ),
                   ),
                 ),
               );
             }
-            Widget _tile({required IconData icon, required String title, required String subtitle, required Color color, required VoidCallback? onTap}) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: GlassCard(
-                  onTap: onTap,
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: [
-                      Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: color, size: 20)),
-                      const SizedBox(width: 14),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w700)), const SizedBox(height: 2), Text(subtitle, style: const TextStyle(color: C.textSecondary, fontSize: 11))])),
-                      if (onTap != null) const Icon(Icons.chevron_right_rounded, color: C.textSecondary),
-                    ],
-                  ),
+          }
+          EOF
+
+          cat > lib/widgets/ping_badge.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../theme/app_theme.dart';
+
+          class PingBadge extends StatelessWidget {
+            final int? ping;
+            final bool large;
+            const PingBadge({super.key, required this.ping, this.large = false});
+            @override
+            Widget build(BuildContext context) {
+              final color = C.pingColor(ping);
+              final text = ping == null ? '--' : ping! >= 9999 ? 'OFF' : '$ping ms';
+              return Container(
+                padding: EdgeInsets.symmetric(horizontal: large ? 12 : 8, vertical: large ? 5 : 3),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: color.withOpacity(0.4)),
+                ),
+                child: Text(text, style: TextStyle(
+                  color: color, fontWeight: FontWeight.w700, fontSize: large ? 13 : 11,
+                )),
+              );
+            }
+          }
+          EOF
+
+          cat > lib/widgets/connect_orb.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+
+          class ConnectOrb extends StatefulWidget {
+            const ConnectOrb({super.key});
+            @override
+            State<ConnectOrb> createState() => _ConnectOrbState();
+          }
+
+          class _ConnectOrbState extends State<ConnectOrb> with TickerProviderStateMixin {
+            late AnimationController _pulse;
+            late AnimationController _rotate;
+
+            @override
+            void initState() {
+              super.initState();
+              _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+              _rotate = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+            }
+
+            @override
+            void dispose() { _pulse.dispose(); _rotate.dispose(); super.dispose(); }
+
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              final isConnected = app.isConnected;
+              final primary = isConnected ? C.success : C.primary;
+              final secondary = isConnected ? const Color(0xFF69F0AE) : C.secondary;
+
+              return GestureDetector(
+                onTap: () => app.toggleConnection(),
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_pulse, _rotate]),
+                  builder: (_, __) {
+                    final scale = 1 + (_pulse.value * 0.05);
+                    return SizedBox(width: 280, height: 280, child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ...List.generate(3, (i) {
+                          final p = (i + 1) / 3;
+                          return Transform.scale(
+                            scale: scale + p * 0.15,
+                            child: Container(width: 220, height: 220, decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: primary.withOpacity(0.15 - p * 0.03), width: 2),
+                            )),
+                          );
+                        }),
+                        Transform.rotate(
+                          angle: _rotate.value * 6.283,
+                          child: Container(width: 210, height: 210, decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: SweepGradient(colors: [
+                              primary.withOpacity(0), primary.withOpacity(0.7), primary.withOpacity(0),
+                            ]),
+                          )),
+                        ),
+                        Container(width: 170, height: 170, decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(colors: [primary.withOpacity(0.35), primary.withOpacity(0.05)]),
+                        )),
+                        Container(
+                          width: 140, height: 140,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [primary, secondary]),
+                            boxShadow: [BoxShadow(color: primary.withOpacity(0.6), blurRadius: 40, spreadRadius: 5)],
+                          ),
+                          child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            const Icon(Icons.power_settings_new_rounded, size: 42, color: Colors.white),
+                            const SizedBox(height: 4),
+                            Text(isConnected ? 'STOP' : 'START', style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 12,
+                            )),
+                          ])),
+                        ),
+                      ],
+                    ));
+                  },
                 ),
               );
             }
           }
-          SETTINGS_EOF
+          EOF
 
-      - name: Rewrite home_screen
+          cat > lib/widgets/config_tile.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../models/vpn_config.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+          import 'glass_card.dart';
+          import 'ping_badge.dart';
+
+          class ConfigTile extends StatelessWidget {
+            final VpnConfig config;
+            const ConfigTile({super.key, required this.config});
+
+            @override
+            Widget build(BuildContext context) {
+              final app = context.read<AppState>();
+              final selected = app.selected?.id == config.id;
+              final protoColor = C.protoColor(config.protocolShort);
+
+              return GlassCard(
+                onTap: () async {
+                  await app.selectConfig(config);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                padding: const EdgeInsets.all(14),
+                child: Row(children: [
+                  Container(width: 6, height: 44, decoration: BoxDecoration(
+                    color: selected ? C.success : protoColor,
+                    borderRadius: BorderRadius.circular(3),
+                    boxShadow: [BoxShadow(color: (selected ? C.success : protoColor).withOpacity(0.5), blurRadius: 8)],
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Flexible(child: Text(config.name, style: const TextStyle(fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
+                      if (selected) ...[
+                        const SizedBox(width: 6),
+                        const Icon(Icons.check_circle_rounded, size: 14, color: C.success),
+                      ],
+                    ]),
+                    const SizedBox(height: 3),
+                    Text('${config.host}:${config.port}',
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(fontSize: 11, color: C.textSecondary),
+                      overflow: TextOverflow.ellipsis),
+                  ])),
+                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    PingBadge(ping: config.ping),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: protoColor.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
+                      child: Text(config.protocolShort, style: TextStyle(fontSize: 9, color: protoColor, fontWeight: FontWeight.w700)),
+                    ),
+                  ]),
+                ]),
+              );
+            }
+          }
+          EOF
+
+      - name: Write screens (1/2)
         run: |
-          cat > lib/screens/home_screen.dart << 'HOME_EOF'
+          cat > lib/screens/splash_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../theme/app_theme.dart';
+          import 'home_screen.dart';
+
+          class SplashScreen extends StatefulWidget {
+            const SplashScreen({super.key});
+            @override
+            State<SplashScreen> createState() => _SplashScreenState();
+          }
+
+          class _SplashScreenState extends State<SplashScreen> {
+            @override
+            void initState() {
+              super.initState();
+              Future.delayed(const Duration(milliseconds: 2200), () {
+                if (mounted) Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()));
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(body: Container(
+                decoration: const BoxDecoration(gradient: RadialGradient(
+                  center: Alignment(-0.6, -0.8), radius: 1.6,
+                  colors: [Color(0xFF2A1E5C), C.bgDark, C.bgDarker],
+                  stops: [0.0, 0.55, 1.0],
+                )),
+                child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Container(width: 140, height: 140, decoration: BoxDecoration(
+                    shape: BoxShape.circle, gradient: const LinearGradient(colors: [C.primary, C.secondary]),
+                    boxShadow: [BoxShadow(color: C.primary.withOpacity(0.5), blurRadius: 40, spreadRadius: 8)],
+                  ), child: const Icon(Icons.shield_rounded, size: 70, color: Colors.white)),
+                  const SizedBox(height: 30),
+                  const Text('PARSAVIP', style: TextStyle(
+                    fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4, color: Colors.white,
+                    shadows: [Shadow(color: C.primary, blurRadius: 20)],
+                  )),
+                  const SizedBox(height: 8),
+                  const Text('Fast • Secure • Private', style: TextStyle(
+                    color: C.textSecondary, letterSpacing: 2, fontSize: 13,
+                  )),
+                  const SizedBox(height: 60),
+                  const SizedBox(width: 40, height: 40, child: CircularProgressIndicator(strokeWidth: 2.5, color: C.secondary)),
+                ])),
+              ));
+            }
+          }
+          EOF
+
+          cat > lib/screens/home_screen.dart << 'EOF'
           import 'package:flutter/material.dart';
           import 'package:provider/provider.dart';
           import '../providers/app_state.dart';
@@ -184,42 +1195,30 @@ jobs:
                     onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
                   ),
                   title: const Text('PARSAVIP', style: TextStyle(letterSpacing: 3, fontWeight: FontWeight.w900)),
-                  actions: [
-                    IconButton(
-                      icon: Icon(app.isAdmin ? Icons.admin_panel_settings : Icons.admin_panel_settings_outlined),
-                      color: app.isAdmin ? C.success : null,
-                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => app.isAdmin ? const AdminPanelScreen() : const AdminLoginScreen())),
-                    ),
-                  ],
+                  actions: [IconButton(
+                    icon: Icon(app.isAdmin ? Icons.admin_panel_settings : Icons.admin_panel_settings_outlined),
+                    color: app.isAdmin ? C.success : null,
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => app.isAdmin ? const AdminPanelScreen() : const AdminLoginScreen())),
+                  )],
                 ),
-                body: GradientBackground(
-                  child: SafeArea(
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 8),
-                        _StatusChip(),
-                        const SizedBox(height: 8),
-                        const Expanded(flex: 5, child: Center(child: ConnectOrb())),
-                        Expanded(
-                          flex: 4,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            child: Column(
-                              children: [
-                                _QuickStats(),
-                                const SizedBox(height: 12),
-                                _SelectedConfigCard(),
-                                const SizedBox(height: 12),
-                                _ActionRow(),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ),
-                  ),
-                ),
+                body: GradientBackground(child: SafeArea(child: Column(children: [
+                  const SizedBox(height: 8),
+                  _StatusChip(),
+                  const SizedBox(height: 8),
+                  const Expanded(flex: 5, child: Center(child: ConnectOrb())),
+                  Expanded(flex: 4, child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(children: [
+                      _QuickStats(),
+                      const SizedBox(height: 12),
+                      _SelectedConfigCard(),
+                      const SizedBox(height: 12),
+                      _ActionRow(),
+                    ]),
+                  )),
+                  const SizedBox(height: 12),
+                ]))),
               );
             }
           }
@@ -237,11 +1236,14 @@ jobs:
               else { color = C.danger; text = 'DISCONNECTED'; }
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(30), border: Border.all(color: color.withOpacity(0.5))),
+                decoration: BoxDecoration(color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(30), border: Border.all(color: color.withOpacity(0.5))),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 8)])),
+                  Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: color, blurRadius: 8)])),
                   const SizedBox(width: 8),
-                  Text(text, style: TextStyle(color: color, fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 11)),
+                  Text(text, textDirection: TextDirection.ltr, style: TextStyle(
+                    color: color, fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 11)),
                 ]),
               );
             }
@@ -261,11 +1263,11 @@ jobs:
                   return GlassCard(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-                      _stat(Icons.timer_outlined, 'Duration', '$hh:$mm:$ss', C.secondary),
+                      _stat(Icons.timer_outlined, 'مدت', '$hh:$mm:$ss', C.secondary),
                       _divider(),
-                      _stat(Icons.bolt_rounded, 'Ping', '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms', C.warning),
+                      _stat(Icons.bolt_rounded, 'پینگ', '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms', C.warning),
                       _divider(),
-                      _stat(Icons.language_rounded, 'Protocol', app.activeConfig?.protocolShort ?? app.selected?.protocolShort ?? '--', C.accent),
+                      _stat(Icons.language_rounded, 'پروتکل', app.activeConfig?.protocolShort ?? app.selected?.protocolShort ?? '--', C.accent),
                     ]),
                   );
                 },
@@ -273,9 +1275,12 @@ jobs:
             }
             Widget _stat(IconData i, String label, String value, Color color) {
               return Column(children: [
-                Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle), child: Icon(i, color: color, size: 14)),
+                Container(padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(color: color.withOpacity(0.15), shape: BoxShape.circle),
+                  child: Icon(i, color: color, size: 14)),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                Text(value, textDirection: TextDirection.ltr,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
                 Text(label, style: const TextStyle(fontSize: 9, color: C.textSecondary)),
               ]);
             }
@@ -290,15 +1295,23 @@ jobs:
               return GlassCard(
                 padding: const EdgeInsets.all(14),
                 child: Row(children: [
-                  Container(width: 44, height: 44, decoration: BoxDecoration(gradient: const LinearGradient(colors: [C.primary, C.secondary]), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.dns_rounded, color: Colors.white)),
+                  Container(width: 44, height: 44, decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [C.primary, C.secondary]),
+                    borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.dns_rounded, color: Colors.white)),
                   const SizedBox(width: 12),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(c?.name ?? 'No Config', style: const TextStyle(fontWeight: FontWeight.w800)),
+                    Text(c?.name ?? 'سروری انتخاب نشده', style: const TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 2),
-                    Text(c == null ? 'Tap to choose' : '${c.host}:${c.port}', style: const TextStyle(color: C.textSecondary, fontSize: 11), overflow: TextOverflow.ellipsis),
+                    Text(c == null ? 'برای انتخاب ضربه بزنید' : '${c.host}:${c.port}',
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(color: C.textSecondary, fontSize: 11),
+                      overflow: TextOverflow.ellipsis),
                   ])),
                   if (c?.ping != null) PingBadge(ping: c!.ping),
-                  IconButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfigsScreen())), icon: const Icon(Icons.swap_horiz_rounded, color: C.secondary)),
+                  IconButton(
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ConfigsScreen())),
+                    icon: const Icon(Icons.swap_horiz_rounded, color: C.secondary)),
                 ]),
               );
             }
@@ -313,9 +1326,11 @@ jobs:
                   onTap: app.pinging ? null : () => app.pingAll(),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    if (app.pinging) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: C.secondary)) else const Icon(Icons.speed_rounded, color: C.secondary),
+                    if (app.pinging) const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: C.secondary))
+                    else const Icon(Icons.speed_rounded, color: C.secondary),
                     const SizedBox(width: 8),
-                    Text(app.pinging ? 'Testing...' : 'Test Ping', style: const TextStyle(fontWeight: FontWeight.w700)),
+                    Text(app.pinging ? 'در حال تست...' : 'تست پینگ', style: const TextStyle(fontWeight: FontWeight.w700)),
                   ]),
                 )),
                 const SizedBox(width: 10),
@@ -325,20 +1340,543 @@ jobs:
                   child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     Icon(Icons.rocket_launch_rounded, color: C.accent),
                     SizedBox(width: 8),
-                    Text('Best Server', style: TextStyle(fontWeight: FontWeight.w700)),
+                    Text('بهترین سرور', style: TextStyle(fontWeight: FontWeight.w700)),
                   ]),
                 )),
               ]);
             }
           }
-          HOME_EOF
+          EOF
 
-      - name: Commit all fixes
+          cat > lib/screens/configs_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/gradient_background.dart';
+          import '../widgets/config_tile.dart';
+
+          class ConfigsScreen extends StatefulWidget {
+            const ConfigsScreen({super.key});
+            @override
+            State<ConfigsScreen> createState() => _ConfigsScreenState();
+          }
+
+          class _ConfigsScreenState extends State<ConfigsScreen> {
+            String _filter = '';
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              var list = app.configs;
+              if (_filter.isNotEmpty) {
+                list = list.where((c) => c.name.toLowerCase().contains(_filter.toLowerCase())
+                  || c.host.toLowerCase().contains(_filter.toLowerCase())).toList();
+              }
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('سرورها'), actions: [
+                  IconButton(icon: const Icon(Icons.speed_rounded),
+                    onPressed: app.pinging ? null : () => app.pingAll()),
+                ]),
+                body: GradientBackground(child: SafeArea(child: Column(children: [
+                  Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 8), child: TextField(
+                    onChanged: (v) => setState(() => _filter = v),
+                    decoration: const InputDecoration(hintText: 'جستجو...', prefixIcon: Icon(Icons.search_rounded)),
+                  )),
+                  if (app.pinging) Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: LinearProgressIndicator(value: app.pingProgress, color: C.secondary, backgroundColor: C.bgCardLight)),
+                  Expanded(child: list.isEmpty
+                    ? const Center(child: Text('هیچ سروری موجود نیست', style: TextStyle(color: C.textSecondary)))
+                    : ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: list.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (_, i) => ConfigTile(config: list[i]),
+                    )),
+                ]))),
+              );
+            }
+          }
+          EOF
+
+          cat > lib/screens/admin_login_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/gradient_background.dart';
+          import 'admin_panel_screen.dart';
+
+          class AdminLoginScreen extends StatefulWidget {
+            const AdminLoginScreen({super.key});
+            @override
+            State<AdminLoginScreen> createState() => _AdminLoginScreenState();
+          }
+
+          class _AdminLoginScreenState extends State<AdminLoginScreen> {
+            final _ctrl = TextEditingController();
+            bool _loading = false;
+            bool _obscure = true;
+
+            @override
+            void dispose() { _ctrl.dispose(); super.dispose(); }
+
+            Future<void> _login() async {
+              setState(() => _loading = true);
+              final ok = await context.read<AppState>().loginAdmin(_ctrl.text);
+              if (!mounted) return;
+              setState(() => _loading = false);
+              if (ok) {
+                Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const AdminPanelScreen()));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ رمز اشتباه است')));
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('ورود ادمین')),
+                body: GradientBackground(child: SafeArea(child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Container(padding: const EdgeInsets.all(24), decoration: BoxDecoration(
+                      shape: BoxShape.circle, gradient: const LinearGradient(colors: [C.accent, C.primary]),
+                      boxShadow: [BoxShadow(color: C.accent.withOpacity(0.5), blurRadius: 30)],
+                    ), child: const Icon(Icons.lock_rounded, size: 46, color: Colors.white)),
+                    const SizedBox(height: 26),
+                    const Text('دسترسی مدیر', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 6),
+                    const Text('رمز عبور را وارد کنید', style: TextStyle(color: C.textSecondary)),
+                    const SizedBox(height: 30),
+                    GlassCard(padding: const EdgeInsets.all(6), child: TextField(
+                      controller: _ctrl, obscureText: _obscure, textAlign: TextAlign.center,
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: '••••••', border: InputBorder.none,
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: C.textSecondary),
+                          onPressed: () => setState(() => _obscure = !_obscure)),
+                      ),
+                      onSubmitted: (_) => _login(),
+                    )),
+                    const SizedBox(height: 20),
+                    SizedBox(width: double.infinity, child: ElevatedButton(
+                      onPressed: _loading ? null : _login,
+                      child: _loading
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('ورود'),
+                    )),
+                  ]),
+                ))),
+              );
+            }
+          }
+          EOF
+
+      - name: Write screens (2/2)
+        run: |
+          cat > lib/screens/admin_panel_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/gradient_background.dart';
+          import '../models/vpn_config.dart';
+
+          class AdminPanelScreen extends StatelessWidget {
+            const AdminPanelScreen({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('پنل مدیریت'), actions: [
+                  IconButton(icon: const Icon(Icons.logout_rounded), onPressed: () {
+                    context.read<AppState>().logoutAdmin();
+                    Navigator.pop(context);
+                  }),
+                ]),
+                body: GradientBackground(child: SafeArea(child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    GlassCard(padding: const EdgeInsets.all(16), child: Row(children: [
+                      Container(padding: const EdgeInsets.all(10), decoration: const BoxDecoration(
+                        shape: BoxShape.circle, gradient: LinearGradient(colors: [C.success, C.secondary]),
+                      ), child: const Icon(Icons.verified_user_rounded, color: Colors.white)),
+                      const SizedBox(width: 12),
+                      const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('خوش آمدید، مدیر', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                        Text('دسترسی کامل فعال است', style: TextStyle(color: C.textSecondary, fontSize: 12)),
+                      ]),
+                    ])),
+                    const SizedBox(height: 16),
+                    _action(icon: Icons.add_link_rounded, title: 'افزودن سرور', color: C.secondary,
+                      onTap: () => _showAdd(context)),
+                    _action(icon: Icons.playlist_add_rounded, title: 'افزودن گروهی', color: C.primary,
+                      onTap: () => _showBulk(context)),
+                    _action(icon: Icons.delete_sweep_rounded, title: 'حذف همه', color: C.danger,
+                      onTap: () => _confirmClear(context)),
+                    const SizedBox(height: 16),
+                    Text('سرورها (${app.configs.length})', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                    const SizedBox(height: 10),
+                    ...app.configs.map((c) => _configTile(context, c, app)),
+                  ],
+                ))),
+              );
+            }
+
+            Widget _action({required IconData icon, required String title, required Color color, required VoidCallback onTap}) {
+              return Padding(padding: const EdgeInsets.only(bottom: 10), child: GlassCard(
+                onTap: onTap, padding: const EdgeInsets.all(14),
+                child: Row(children: [
+                  Container(padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
+                    child: Icon(icon, color: color)),
+                  const SizedBox(width: 14),
+                  Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700))),
+                  const Icon(Icons.chevron_left_rounded, color: C.textSecondary),
+                ]),
+              ));
+            }
+
+            Widget _configTile(BuildContext context, VpnConfig c, AppState app) {
+              return Padding(padding: const EdgeInsets.only(bottom: 8), child: GlassCard(
+                padding: const EdgeInsets.all(12),
+                child: Row(children: [
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(c.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text('${c.host}:${c.port}', textDirection: TextDirection.ltr,
+                      style: const TextStyle(color: C.textSecondary, fontSize: 11)),
+                  ])),
+                  IconButton(icon: const Icon(Icons.delete_rounded, color: C.danger),
+                    onPressed: () => app.removeConfig(c.id)),
+                ]),
+              ));
+            }
+
+            void _showAdd(BuildContext context) {
+              final ctrl = TextEditingController();
+              showDialog(context: context, builder: (_) => AlertDialog(
+                title: const Text('افزودن سرور'),
+                content: TextField(controller: ctrl, maxLines: 4,
+                  textDirection: TextDirection.ltr,
+                  style: const TextStyle(fontSize: 12),
+                  decoration: const InputDecoration(hintText: 'ss:// vless:// vmess:// trojan://')),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('لغو')),
+                  ElevatedButton(onPressed: () async {
+                    final ok = await context.read<AppState>().addConfig(ctrl.text);
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(ok ? '✅ اضافه شد' : '❌ URI نامعتبر')));
+                    }
+                  }, child: const Text('افزودن')),
+                ],
+              ));
+            }
+
+            void _showBulk(BuildContext context) {
+              final ctrl = TextEditingController();
+              showDialog(context: context, builder: (_) => AlertDialog(
+                title: const Text('افزودن گروهی'),
+                content: SizedBox(width: 500, child: TextField(controller: ctrl, maxLines: 10,
+                  textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 11),
+                  decoration: const InputDecoration(hintText: 'هر خط یک URI...'))),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('لغو')),
+                  ElevatedButton(onPressed: () async {
+                    final lines = ctrl.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+                    final added = await context.read<AppState>().addMultiple(lines);
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('✅ $added سرور اضافه شد')));
+                    }
+                  }, child: const Text('ایمپورت')),
+                ],
+              ));
+            }
+
+            void _confirmClear(BuildContext context) {
+              showDialog(context: context, builder: (_) => AlertDialog(
+                title: const Text('حذف همه سرورها؟'),
+                content: const Text('این عمل قابل بازگشت نیست.'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('لغو')),
+                  ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: C.danger),
+                    onPressed: () { context.read<AppState>().clearAll(); Navigator.pop(context); },
+                    child: const Text('حذف')),
+                ],
+              ));
+            }
+          }
+          EOF
+
+          cat > lib/screens/settings_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/gradient_background.dart';
+          import 'about_screen.dart';
+          import 'faq_screen.dart';
+          import 'logs_screen.dart';
+
+          class SettingsScreen extends StatelessWidget {
+            const SettingsScreen({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('تنظیمات')),
+                body: GradientBackground(child: SafeArea(child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _tile(icon: Icons.list_alt_rounded, title: 'گزارش‌ها',
+                      subtitle: 'مشاهده رویدادهای برنامه', color: C.warning,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LogsScreen()))),
+                    _tile(icon: Icons.help_outline_rounded, title: 'سوالات متداول',
+                      subtitle: 'پاسخ سوالات پرتکرار', color: C.success,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FaqScreen()))),
+                    _tile(icon: Icons.info_outline_rounded, title: 'درباره PARSAVIP',
+                      subtitle: 'اطلاعات برنامه', color: C.accent,
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()))),
+                    const SizedBox(height: 20),
+                    const Center(child: Text('PARSAVIP v1.0.0',
+                      textDirection: TextDirection.ltr,
+                      style: TextStyle(color: C.textHint, fontSize: 12))),
+                  ],
+                ))),
+              );
+            }
+
+            Widget _tile({required IconData icon, required String title, required String subtitle,
+              required Color color, required VoidCallback? onTap}) {
+              return Padding(padding: const EdgeInsets.only(bottom: 10), child: GlassCard(
+                onTap: onTap, padding: const EdgeInsets.all(14),
+                child: Row(children: [
+                  Container(padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
+                    child: Icon(icon, color: color, size: 20)),
+                  const SizedBox(width: 14),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: const TextStyle(color: C.textSecondary, fontSize: 11)),
+                  ])),
+                  if (onTap != null) const Icon(Icons.chevron_left_rounded, color: C.textSecondary),
+                ]),
+              ));
+            }
+          }
+          EOF
+
+          cat > lib/screens/about_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../data/about_data.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/gradient_background.dart';
+
+          class AboutScreen extends StatelessWidget {
+            const AboutScreen({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('درباره')),
+                body: GradientBackground(child: SafeArea(child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Center(child: Container(padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(shape: BoxShape.circle,
+                        gradient: const LinearGradient(colors: [C.primary, C.secondary]),
+                        boxShadow: [BoxShadow(color: C.primary.withOpacity(0.4), blurRadius: 30)]),
+                      child: const Icon(Icons.shield_rounded, size: 60, color: Colors.white))),
+                    const SizedBox(height: 16),
+                    const Center(child: Text('PARSAVIP', textDirection: TextDirection.ltr,
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 4))),
+                    const SizedBox(height: 4),
+                    const Center(child: Text('Fast • Secure • Private', textDirection: TextDirection.ltr,
+                      style: TextStyle(color: C.textSecondary, fontSize: 12, letterSpacing: 1))),
+                    const SizedBox(height: 20),
+                    GlassCard(padding: const EdgeInsets.all(16), child: Text(AboutData.longDescription,
+                      style: const TextStyle(color: C.textSecondary, fontSize: 13, height: 1.7))),
+                    const SizedBox(height: 20),
+                    const Text('ویژگی‌ها', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    const SizedBox(height: 10),
+                    ...AboutData.features.map((f) => Padding(padding: const EdgeInsets.only(bottom: 8),
+                      child: GlassCard(padding: const EdgeInsets.all(12), child: Row(children: [
+                        Text(f.emoji, style: const TextStyle(fontSize: 26)),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(f.title, style: const TextStyle(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 2),
+                          Text(f.desc, style: const TextStyle(color: C.textSecondary, fontSize: 11)),
+                        ])),
+                      ])))),
+                    const SizedBox(height: 20),
+                    const Center(child: Text('Made with ❤️ for Privacy',
+                      textDirection: TextDirection.ltr,
+                      style: TextStyle(color: C.textHint, fontSize: 12))),
+                  ],
+                ))),
+              );
+            }
+          }
+          EOF
+
+          cat > lib/screens/faq_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../data/faq_data.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/gradient_background.dart';
+
+          class FaqScreen extends StatelessWidget {
+            const FaqScreen({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('سوالات متداول')),
+                body: GradientBackground(child: SafeArea(child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: faqList.length,
+                  itemBuilder: (_, i) => _FaqTile(item: faqList[i], index: i),
+                ))),
+              );
+            }
+          }
+
+          class _FaqTile extends StatefulWidget {
+            final FaqItem item;
+            final int index;
+            const _FaqTile({required this.item, required this.index});
+            @override
+            State<_FaqTile> createState() => _FaqTileState();
+          }
+
+          class _FaqTileState extends State<_FaqTile> {
+            bool _open = false;
+            @override
+            Widget build(BuildContext context) {
+              return Padding(padding: const EdgeInsets.only(bottom: 10), child: Container(
+                decoration: BoxDecoration(color: C.bgCard.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(16), border: Border.all(color: C.border)),
+                child: Column(children: [
+                  InkWell(borderRadius: BorderRadius.circular(16),
+                    onTap: () => setState(() => _open = !_open),
+                    child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [
+                      Container(width: 30, height: 30, alignment: Alignment.center,
+                        decoration: BoxDecoration(color: C.primary.withOpacity(0.2), shape: BoxShape.circle),
+                        child: Text('${widget.index + 1}', textDirection: TextDirection.ltr,
+                          style: const TextStyle(fontWeight: FontWeight.w800, color: C.secondary, fontSize: 12))),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(widget.item.question, style: const TextStyle(fontWeight: FontWeight.w700))),
+                      AnimatedRotation(turns: _open ? 0.5 : 0, duration: const Duration(milliseconds: 200),
+                        child: const Icon(Icons.keyboard_arrow_down_rounded, color: C.textSecondary)),
+                    ]))),
+                  AnimatedCrossFade(
+                    duration: const Duration(milliseconds: 250),
+                    crossFadeState: _open ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                    firstChild: const SizedBox(width: double.infinity),
+                    secondChild: Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Text(widget.item.answer, style: const TextStyle(color: C.textSecondary, fontSize: 13, height: 1.7))),
+                  ),
+                ]),
+              ));
+            }
+          }
+          EOF
+
+          cat > lib/screens/logs_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../models/log_entry.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/gradient_background.dart';
+
+          class LogsScreen extends StatelessWidget {
+            const LogsScreen({super.key});
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              final logs = app.logs.logs;
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(title: const Text('گزارش‌ها'), actions: [
+                  IconButton(icon: const Icon(Icons.delete_sweep_rounded), onPressed: () => app.logs.clear()),
+                ]),
+                body: GradientBackground(child: SafeArea(child: logs.isEmpty
+                  ? const Center(child: Text('هیچ گزارشی موجود نیست', style: TextStyle(color: C.textSecondary)))
+                  : ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: logs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) => _LogTile(entry: logs[i]),
+                  ))),
+              );
+            }
+          }
+
+          class _LogTile extends StatelessWidget {
+            final LogEntry entry;
+            const _LogTile({required this.entry});
+            @override
+            Widget build(BuildContext context) {
+              final color = entry.level == LogLevel.info ? C.info
+                : entry.level == LogLevel.warning ? C.warning
+                : entry.level == LogLevel.error ? C.danger : C.success;
+              return GlassCard(padding: const EdgeInsets.all(12), child: Row(children: [
+                Container(width: 4, height: 40, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
+                const SizedBox(width: 10),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${entry.icon} ${entry.message}', style: const TextStyle(fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Text(_fmt(entry.timestamp), textDirection: TextDirection.ltr,
+                    style: const TextStyle(fontSize: 10, color: C.textHint)),
+                ])),
+              ]));
+            }
+            String _fmt(DateTime d) {
+              final h = d.hour.toString().padLeft(2, '0');
+              final m = d.minute.toString().padLeft(2, '0');
+              return '$h:$m - ${d.year}/${d.month}/${d.day}';
+            }
+          }
+          EOF
+
+      - name: Verify all files
+        run: |
+          echo "=== Files in lib ==="
+          find lib -type f -name "*.dart" | sort
+          echo ""
+          echo "=== Count ==="
+          find lib -type f -name "*.dart" | wc -l
+
+      - name: Add INTERNET permission to manifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>\n    <application|' $MANIFEST
+          sed -i 's|android:label="parsavip"|android:label="PARSAVIP"|' $MANIFEST
+          echo "=== AndroidManifest ==="
+          head -15 $MANIFEST
+
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Fix DialogThemeData + rebuild" || echo "Nothing to commit"
+          git commit -m "Complete fix: security + RTL + ping + build" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
