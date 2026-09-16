@@ -25,11 +25,13 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Fix vpn_service with proper TUN + DNS + routing
+      - name: Fix vpn_service with full debug + proxy fallback
         run: |
+          mkdir -p lib/services
           cat > lib/services/vpn_service.dart << 'EOF'
           import 'dart:async';
           import 'dart:convert';
+          import 'dart:io';
           import 'package:flutter_v2ray/flutter_v2ray.dart';
           import '../models/vpn_config.dart';
           import 'log_service.dart';
@@ -43,6 +45,7 @@ jobs:
             VpnStatus _status = VpnStatus.disconnected;
             VpnConfig? _current;
             String? _lastError;
+            bool _proxyMode = false;
 
             final _statusCtrl = StreamController<VpnStatus>.broadcast();
             final _durationCtrl = StreamController<Duration>.broadcast();
@@ -52,6 +55,7 @@ jobs:
             VpnStatus get status => _status;
             VpnConfig? get current => _current;
             String? get lastError => _lastError;
+            bool get isProxyMode => _proxyMode;
             Stream<VpnStatus> get statusStream => _statusCtrl.stream;
             Stream<Duration> get durationStream => _durationCtrl.stream;
             Duration get duration => _duration;
@@ -83,91 +87,123 @@ jobs:
               }
             }
 
-            /// ساخت config کامل با TUN + DNS + routing
-            String _buildConfig(String uri) {
+            /// ساخت config با DNS و routing کامل
+            String _buildConfig(VpnConfig config) {
               try {
-                final parser = FlutterV2ray.parseFromURL(uri);
+                final parser = FlutterV2ray.parseFromURL(config.rawUri);
                 final baseConfig = parser.getFullConfiguration();
-                final configMap = jsonDecode(baseConfig) as Map<String, dynamic>;
+                await_log_safe('Parsed base config length: ${baseConfig.length}');
 
-                // ✅ Log کن که ببینیم چی هست
-                _logs.add(LogLevel.info, 'Config keys: ${configMap.keys.join(",")}');
+                Map<String, dynamic> configMap;
+                try {
+                  configMap = jsonDecode(baseConfig) as Map<String, dynamic>;
+                } catch (e) {
+                  await_log_safe('Cannot decode base config: $e');
+                  return baseConfig;
+                }
 
-                // ✅ DNS
+                // ✅ DNS servers
                 configMap['dns'] = {
-                  'servers': ['1.1.1.1', '8.8.8.8', '1.0.0.1'],
+                  'servers': [
+                    '1.1.1.1',
+                    '8.8.8.8',
+                    '1.0.0.1',
+                    {'address': 'localhost', 'domains': ['geosite:category-ir']}
+                  ],
                   'queryStrategy': 'UseIP',
                   'disableCache': false,
+                  'disableFallback': false,
+                  'tag': 'dns_inbound'
                 };
 
-                // ✅ routing - همه چیز به پروکسی
+                // ✅ Routing - همه چیز از پروکسی
                 configMap['routing'] = {
                   'domainStrategy': 'IPIfNonMatch',
+                  'domainMatcher': 'hybrid',
                   'rules': [
                     {
                       'type': 'field',
                       'outboundTag': 'direct',
-                      'ip': ['geoip:private'],
-                      'domain': ['geosite:private']
+                      'domain': ['geosite:category-ir', 'geosite:private']
                     },
-                  ],
-                  'final': 'proxy',
+                    {
+                      'type': 'field',
+                      'outboundTag': 'direct',
+                      'ip': ['geoip:ir', 'geoip:private']
+                    }
+                  ]
                 };
 
-                // ✅ sniffing به inbound
+                // ✅ Sniffing
                 final inbounds = configMap['inbounds'] as List?;
-                if (inbounds != null) {
+                if (inbounds != null && inbounds.isNotEmpty) {
                   for (var inb in inbounds) {
                     if (inb is Map<String, dynamic>) {
                       inb['sniffing'] = {
                         'enabled': true,
                         'destOverride': ['http', 'tls', 'quic'],
-                        'routeOnly': true,
+                        'routeOnly': false,
+                        'metadataOnly': false
                       };
                     }
                   }
                 }
 
+                // ✅ اطمینان از log
+                configMap['log'] = {'loglevel': 'warning'};
+
                 final finalConfig = jsonEncode(configMap);
-                _logs.add(LogLevel.info, 'Config built OK');
+                await_log_safe('Final config built, length: ${finalConfig.length}');
                 return finalConfig;
               } catch (e) {
-                _logs.add(LogLevel.error, 'buildConfig fail: $e');
-                return FlutterV2ray.parseFromURL(uri).getFullConfiguration();
+                await_log_safe('buildConfig error: $e');
+                try {
+                  return FlutterV2ray.parseFromURL(config.rawUri).getFullConfiguration();
+                } catch (e2) {
+                  return config.rawUri;
+                }
               }
             }
 
-            Future<bool> connect(VpnConfig config) async {
+            void await_log_safe(String msg) {
+              _logs.add(LogLevel.info, msg);
+            }
+
+            Future<bool> connect(VpnConfig config, {bool proxyMode = false}) async {
               if (isBusy || isConnected) return false;
               _status = VpnStatus.connecting;
               _statusCtrl.add(_status);
               _current = config;
               _lastError = null;
+              _proxyMode = proxyMode;
 
               try {
-                await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} ${config.host}');
+                await _logs.add(LogLevel.info, '═══════════════════');
+                await _logs.add(LogLevel.info, 'Connect: ${config.protocolShort} @ ${config.host}');
+                await _logs.add(LogLevel.info, 'Mode: ${proxyMode ? "PROXY" : "TUN"}');
 
-                final fullConfig = _buildConfig(config.rawUri);
+                final fullConfig = _buildConfig(config);
 
                 final permitted = await _v2ray.requestPermission();
                 if (!permitted) throw Exception('VPN permission denied');
+                await _logs.add(LogLevel.info, 'Permission OK');
 
                 await _v2ray.startV2Ray(
                   remark: config.name,
                   config: fullConfig,
-                  proxyOnly: false,
+                  proxyOnly: proxyMode,
                 );
 
                 _status = VpnStatus.connected;
                 _statusCtrl.add(_status);
                 _startTimer();
-                await _logs.add(LogLevel.success, 'Connected');
+                await _logs.add(LogLevel.success, '✅ Connected (${proxyMode ? "SOCKS5" : "TUN"})');
                 return true;
               } catch (e) {
                 _lastError = e.toString();
                 _status = VpnStatus.error;
                 _statusCtrl.add(_status);
-                await _logs.add(LogLevel.error, 'Failed: $e');
+                await _logs.add(LogLevel.error, '❌ Failed: $e');
                 return false;
               }
             }
@@ -184,9 +220,9 @@ jobs:
               await _logs.add(LogLevel.info, 'Disconnected');
             }
 
-            Future<void> toggle(VpnConfig config) async {
+            Future<void> toggle(VpnConfig config, {bool proxyMode = false}) async {
               if (isConnected) await disconnect();
-              else await connect(config);
+              else await connect(config, proxyMode: proxyMode);
             }
 
             void _startTimer() {
@@ -213,22 +249,212 @@ jobs:
           }
           EOF
 
-      - name: Commit
+      - name: Fix home_screen with proxy mode button
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Fix routing + TUN + debug logs" || echo "Nothing"
-          git push || echo "Nothing"
+          cat > lib/screens/home_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../services/vpn_service.dart';
+          import '../theme/app_theme.dart';
+          import '../widgets/gradient_background.dart';
+          import '../widgets/connect_orb.dart';
+          import '../widgets/glass_card.dart';
+          import '../widgets/ping_badge.dart';
+          import 'configs_screen.dart';
+          import 'admin_login_screen.dart';
+          import 'admin_panel_screen.dart';
+          import 'settings_screen.dart';
 
-      - name: Get dependencies
-        run: flutter pub get
+          class HomeScreen extends StatelessWidget {
+            const HomeScreen({super.key});
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(
+                  leading: IconButton(icon: const Icon(Icons.settings_rounded),
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()))),
+                  title: const Text('PARSAVIP', textDirection: TextDirection.ltr,
+                    style: TextStyle(letterSpacing: 3, fontWeight: FontWeight.w900)),
+                  actions: [IconButton(
+                    icon: Icon(app.isAdmin ? Icons.admin_panel_settings : Icons.admin_panel_settings_outlined),
+                    color: app.isAdmin ? C.success : null,
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+                      app.isAdmin ? const AdminPanelScreen() : const AdminLoginScreen())))]),
+                body: GradientBackground(child: SafeArea(child: Column(children: [
+                  const SizedBox(height: 8),
+                  _StatusChip(),
+                  const SizedBox(height: 8),
+                  const Expanded(flex: 5, child: Center(child: ConnectOrb())),
+                  Expanded(flex: 4, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(children: [
+                      _QuickStats(),
+                      const SizedBox(height: 12),
+                      _SelectedConfigCard(),
+                      const SizedBox(height: 12),
+                      _ActionRow(),
+                    ]))),
+                  const SizedBox(height: 12),
+                ]))),
+              );
+            }
+          }
 
-      - name: Build APK
-        run: flutter build apk --release
+          class _StatusChip extends StatelessWidget {
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              final s = app.status;
+              Color c; String t;
+              if (s == VpnStatus.connected) { c = C.success; t = 'CONNECTED'; }
+              else if (s == VpnStatus.connecting) { c = C.warning; t = 'CONNECTING...'; }
+              else if (s == VpnStatus.disconnecting) { c = C.warning; t = 'DISCONNECTING...'; }
+              else if (s == VpnStatus.error) { c = C.danger; t = 'ERROR'; }
+              else { c = C.danger; t = 'DISCONNECTED'; }
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(color: c.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(30), border: Border.all(color: c.withOpacity(0.5))),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: c, blurRadius: 8)])),
+                  const SizedBox(width: 8),
+                  Text(t, textDirection: TextDirection.ltr,
+                    style: TextStyle(color: c, fontWeight: FontWeight.w800, letterSpacing: 1.5, fontSize: 11)),
+                ]));
+            }
+          }
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk
-          path: build/app/outputs/flutter-apk/*.apk
+          class _QuickStats extends StatelessWidget {
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              return StreamBuilder<Duration>(stream: app.vpn.durationStream, builder: (_, snap) {
+                final d = snap.data ?? Duration.zero;
+                final hh = d.inHours.toString().padLeft(2, '0');
+                final mm = (d.inMinutes % 60).toString().padLeft(2, '0');
+                final ss = (d.inSeconds % 60).toString().padLeft(2, '0');
+                return GlassCard(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+                    _stat(Icons.timer_outlined, 'مدت', '$hh:$mm:$ss', C.secondary),
+                    _div(),
+                    _stat(Icons.bolt_rounded, 'پینگ', '${app.activeConfig?.ping ?? app.selected?.ping ?? "--"} ms', C.warning),
+                    _div(),
+                    _stat(Icons.language_rounded, 'پروتکل', app.activeConfig?.protocolShort ?? app.selected?.protocolShort ?? '--', C.accent),
+                  ]));
+              });
+            }
+            Widget _stat(IconData i, String l, String v, Color c) => Column(children: [
+              Container(padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(color: c.withOpacity(0.15), shape: BoxShape.circle),
+                child: Icon(i, color: c, size: 14)),
+              const SizedBox(height: 4),
+              Text(v, textDirection: TextDirection.ltr, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+              Text(l, style: const TextStyle(fontSize: 9, color: C.textSecondary)),
+            ]);
+            Widget _div() => Container(width: 1, height: 30, color: Colors.white12);
+          }
+
+          class _SelectedConfigCard extends StatelessWidget {
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              final c = app.selected;
+              return GlassCard(padding: const EdgeInsets.all(14), child: Row(children: [
+                Container(width: 44, height: 44, decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [C.primary, C.secondary]),
+                  borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.dns_rounded, color: Colors.white)),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(c?.name ?? 'سروری انتخاب نشده', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(c == null ? 'برای انتخاب ضربه بزنید' : '${c.host}:${c.port}',
+                    textDirection: TextDirection.ltr,
+                    style: const TextStyle(color: C.textSecondary, fontSize: 11),
+                    overflow: TextOverflow.ellipsis),
+                ])),
+                if (c?.ping != null) PingBadge(ping: c!.ping),
+                IconButton(onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ConfigsScreen())),
+                  icon: const Icon(Icons.swap_horiz_rounded, color: C.secondary)),
+              ]));
+            }
+          }
+
+          class _ActionRow extends StatelessWidget {
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              return Column(children: [
+                Row(children: [
+                  Expanded(child: GlassCard(
+                    onTap: app.pinging ? null : () => app.pingAll(),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      if (app.pinging) const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: C.secondary))
+                      else const Icon(Icons.speed_rounded, color: C.secondary),
+                      const SizedBox(width: 8),
+                      Text(app.pinging ? 'در حال تست...' : 'تست پینگ',
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    ]))),
+                  const SizedBox(width: 10),
+                  Expanded(child: GlassCard(
+                    onTap: app.pinging ? null : () => app.connectToBest(),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.rocket_launch_rounded, color: C.accent),
+                      SizedBox(width: 8),
+                      Text('بهترین سرور', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ]))),
+                ]),
+              ]);
+            }
+          }
+          EOF
+
+      - name: Add proxy mode button to orb
+        run: |
+          # اضافه کردن دکمه پروکسی به کانکت ارب
+          cat > lib/widgets/connect_orb.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import 'package:provider/provider.dart';
+          import '../providers/app_state.dart';
+          import '../theme/app_theme.dart';
+
+          class ConnectOrb extends StatefulWidget {
+            const ConnectOrb({super.key});
+            @override
+            State<ConnectOrb> createState() => _ConnectOrbState();
+          }
+          class _ConnectOrbState extends State<ConnectOrb> with TickerProviderStateMixin {
+            late AnimationController _p, _r;
+            bool _proxyMode = false;
+            @override
+            void initState() {
+              super.initState();
+              _p = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+              _r = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+            }
+            @override
+            void dispose() { _p.dispose(); _r.dispose(); super.dispose(); }
+            @override
+            Widget build(BuildContext context) {
+              final app = context.watch<AppState>();
+              final ic = app.isConnected;
+              final p = ic ? C.success : C.primary;
+              final s = ic ? const Color(0xFF69F0AE) : C.secondary;
+              return Column(mainAxisSize: MainAxisSize.min, children: [
+                GestureDetector(
+                  onTap: () async {
+                    if (app.isConnected) {
+                      await app.vpn.disconnect();
+                    } else if (app.selected != null) {
+                      await app.vpn.connect(app.selected!, proxyMode: _proxyMode);
+                      app.notify();
+                    }
+                  },
+                  child: AnimatedBuilder(animation: Listenable.merge([_p,
