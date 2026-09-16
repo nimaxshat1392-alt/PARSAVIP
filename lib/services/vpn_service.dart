@@ -62,7 +62,6 @@ class VpnService {
     try {
       await _logs.add(LogLevel.info, 'Parsing config: ${config.protocolShort}');
 
-      // ✅ مرحله کلیدی: پارس کردن URI به JSON
       final parser = FlutterV2ray.parseFromURL(config.rawUri);
       final fullConfig = parser.getFullConfiguration();
 
@@ -79,11 +78,6 @@ class VpnService {
         remark: config.name,
         config: fullConfig,
         proxyOnly: false,
-        blockedApps: null,
-        bypassApps: null,
-        bypassSubnets: null,
-        notificationIconResourceType: 'mipmap',
-        notificationIconResourceName: 'ic_launcher',
       );
 
       _status = VpnStatus.connected;
