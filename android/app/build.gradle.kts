@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace "com.parsavip.parsavip"
-    compileSdk 33  // ← مهم: ۳۳ نه ۳۴
+    compileSdk 35 // طبق نیازمندی پلاگین جدید
+    ndkVersion flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -19,8 +20,8 @@ android {
 
     defaultConfig {
         applicationId "com.parsavip.parsavip"
-        minSdkVersion 21
-        targetSdkVersion 33  // ← مهم: ۳۳
+        minSdkVersion 23 // حداقل نسخه مورد نیاز پلاگین
+        targetSdkVersion 34
         versionCode 1
         versionName "1.0.0"
     }
@@ -30,6 +31,12 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true // طبق مستندات پلاگین برای لود صحیح کتابخانه‌های بومی
         }
     }
 }
