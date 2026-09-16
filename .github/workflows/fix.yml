@@ -25,10 +25,11 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Fix vpn_service.dart
+      - name: Fix vpn_service.dart with DNS injection
         run: |
           cat > lib/services/vpn_service.dart << 'EOF'
           import 'dart:async';
+          import 'dart:convert';
           import 'package:flutter_v2ray/flutter_v2ray.dart';
           import '../models/vpn_config.dart';
           import 'log_service.dart';
@@ -82,6 +83,64 @@ jobs:
               }
             }
 
+            /// تبدیل URI به JSON با تزریق DNS و routing درست
+            String _buildConfig(String uri) {
+              try {
+                final parser = FlutterV2ray.parseFromURL(uri);
+                final baseConfig = parser.getFullConfiguration();
+                final configMap = jsonDecode(baseConfig) as Map<String, dynamic>;
+
+                // ✅ تزریق DNS
+                configMap['dns'] = {
+                  'servers': [
+                    '1.1.1.1',
+                    '8.8.8.8',
+                    '9.9.9.9',
+                    '1.0.0.1'
+                  ],
+                  'queryStrategy': 'UseIP',
+                  'disableCache': false,
+                  'disableFallback': false,
+                };
+
+                // ✅ تنظیم routing
+                configMap['routing'] = {
+                  'domainStrategy': 'IPIfNonMatch',
+                  'rules': [
+                    {
+                      'type': 'field',
+                      'outboundTag': 'direct',
+                      'domain': ['geosite:private', 'geosite:category-ir']
+                    },
+                    {
+                      'type': 'field',
+                      'outboundTag': 'direct',
+                      'ip': ['geoip:private', 'geoip:ir']
+                    }
+                  ]
+                };
+
+                // ✅ اضافه کردن sniffing به inbound
+                final inbounds = configMap['inbounds'] as List?;
+                if (inbounds != null) {
+                  for (var inb in inbounds) {
+                    if (inb is Map<String, dynamic>) {
+                      inb['sniffing'] = {
+                        'enabled': true,
+                        'destOverride': ['http', 'tls', 'quic'],
+                        'routeOnly': false
+                      };
+                    }
+                  }
+                }
+
+                return jsonEncode(configMap);
+              } catch (e) {
+                // اگه خطا داد، به config خام برگرد
+                return FlutterV2ray.parseFromURL(uri).getFullConfiguration();
+              }
+            }
+
             Future<bool> connect(VpnConfig config) async {
               if (isBusy || isConnected) return false;
               _status = VpnStatus.connecting;
@@ -90,17 +149,15 @@ jobs:
               _lastError = null;
 
               try {
-                await _logs.add(LogLevel.info, 'Parsing config: ${config.protocolShort}');
+                await _logs.add(LogLevel.info, 'Parsing: ${config.protocolShort}');
 
-                final parser = FlutterV2ray.parseFromURL(config.rawUri);
-                final fullConfig = parser.getFullConfiguration();
+                // ✅ ساخت config با DNS و routing
+                final fullConfig = _buildConfig(config.rawUri);
 
-                await _logs.add(LogLevel.info, 'Parsed OK, requesting permission');
+                await _logs.add(LogLevel.info, 'Config ready');
 
                 final permitted = await _v2ray.requestPermission();
-                if (!permitted) {
-                  throw Exception('دسترسی VPN رد شد');
-                }
+                if (!permitted) throw Exception('دسترسی VPN رد شد');
 
                 await _logs.add(LogLevel.info, 'Starting V2Ray...');
 
@@ -113,13 +170,13 @@ jobs:
                 _status = VpnStatus.connected;
                 _statusCtrl.add(_status);
                 _startTimer();
-                await _logs.add(LogLevel.success, 'Connected');
+                await _logs.add(LogLevel.success, 'Connected with DNS');
                 return true;
               } catch (e) {
                 _lastError = e.toString();
                 _status = VpnStatus.error;
                 _statusCtrl.add(_status);
-                await _logs.add(LogLevel.error, 'Connect failed: $e');
+                await _logs.add(LogLevel.error, 'Failed: $e');
                 return false;
               }
             }
@@ -170,7 +227,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Remove unsupported params" || echo "Nothing"
+          git commit -m "Add DNS injection for traffic flow" || echo "Nothing"
           git push || echo "Nothing"
 
       - name: Get dependencies
