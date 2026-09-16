@@ -1,4 +1,4 @@
-name: Build PARSAVIP
+name: Build PARSAVIP APK
 
 on:
   push:
@@ -22,64 +22,75 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter (latest stable)
+        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.6'
           channel: 'stable'
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
-
-      - name: Backup pubspec
-        run: cp pubspec.yaml pubspec_backup.yaml
-
-      - name: Regenerate android
+      - name: Show versions
         run: |
-          rm -rf android .metadata
+          flutter --version
+          java -version
+
+      - name: Clean old android
+        run: |
+          rm -rf android
+          rm -rf .metadata
+
+      - name: Backup lib folder
+        run: |
+          mkdir -p /tmp/lib_backup
+          cp -r lib/* /tmp/lib_backup/ || true
+          mkdir -p /tmp/pubspec_backup
+          cp pubspec.yaml /tmp/pubspec_backup/ || true
+
+      - name: Regenerate android folder
+        run: |
           flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
+
+      - name: Restore lib and pubspec
+        run: |
+          rm -rf lib
+          mkdir -p lib
+          cp -r /tmp/lib_backup/* lib/
+          cp /tmp/pubspec_backup/pubspec.yaml pubspec.yaml
           rm -rf test
 
-      - name: Restore pubspec
-        run: mv pubspec_backup.yaml pubspec.yaml
-
-      - name: Show generated settings.gradle
-        run: |
-          echo "=== settings.gradle ==="
-          cat android/settings.gradle
-          echo "=== gradle-wrapper.properties ==="
-          cat android/gradle/wrapper/gradle-wrapper.properties
-
-      - name: Show generated app/build.gradle
-        run: |
-          echo "=== app/build.gradle ==="
-          cat android/app/build.gradle
-
-      - name: Fix manifest
-        run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          sed -i 's|android:label="parsavip"|android:label="PARSAVIP"|' $MANIFEST || true
-          cat $MANIFEST
-
-      - name: Download sing-box
+      - name: Download sing-box binary
         run: |
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
           SB_VERSION="1.10.1"
           cd /tmp
           wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VERSION}/sing-box-${SB_VERSION}-android-arm64.tar.gz"
           tar -xzf "sing-box-${SB_VERSION}-android-arm64.tar.gz"
-          cp "sing-box-${SB_VERSION}-android-arm64/sing-box" "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
+          cp "sing-box-${SB_VERSION}-android-arm64/sing-box" \
+             "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
           chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
           ls -la "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/"
+
+      - name: Patch AndroidManifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          
+          # اضافه کردن مجوزها بعد از tag manifest
+          sed -i 's|<manifest\(.*\)>|<manifest\1>\
+              <uses-permission android:name="android.permission.INTERNET"/>\
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' $MANIFEST
+          
+          # تغییر label
+          sed -i 's|android:label="parsavip"|android:label="PARSAVIP" android:extractNativeLibs="true"|' $MANIFEST
+          
+          echo "=== FINAL MANIFEST ==="
+          cat $MANIFEST
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Show resolved versions
-        run: |
-          echo "=== pubspec.lock (partial) ==="
-          grep -A 2 "shared_preferences_android" pubspec.lock || true
-          grep -A 2 "package_info_plus" pubspec.lock || true
+      - name: Analyze (non-blocking)
+        run: flutter analyze || true
 
       - name: Build APK
         run: flutter build apk --release --target-platform android-arm64
@@ -90,3 +101,4 @@ jobs:
           name: parsavip-apk
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 30
+          if-no-files-found: error
