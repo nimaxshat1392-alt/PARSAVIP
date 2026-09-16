@@ -10,6 +10,7 @@ import '../widgets/ping_badge.dart';
 import 'configs_screen.dart';
 import 'admin_login_screen.dart';
 import 'admin_panel_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -20,6 +21,13 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.settings_rounded),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          ),
+        ),
         title: const Text(
           'PARSAVIP',
           style: TextStyle(
@@ -85,6 +93,7 @@ class HomeScreen extends StatelessWidget {
 
 class _StatusChip extends StatelessWidget {
   const _StatusChip();
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
@@ -128,7 +137,9 @@ class _StatusChip extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: color, blurRadius: 8)],
+              boxShadow: [
+                BoxShadow(color: color, blurRadius: 8),
+              ],
             ),
           ),
           const SizedBox(width: 8),
@@ -149,6 +160,7 @@ class _StatusChip extends StatelessWidget {
 
 class _QuickStats extends StatelessWidget {
   const _QuickStats();
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
@@ -223,6 +235,7 @@ class _QuickStats extends StatelessWidget {
 
 class _SelectedConfigCard extends StatelessWidget {
   const _SelectedConfigCard();
+
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
