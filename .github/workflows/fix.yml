@@ -1,6 +1,9 @@
-name: Build APK
+name: Build PARSAVIP with Sing-box
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,20 +25,14 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Ensure folders
-        run: mkdir -p lib/services
+      - name: Get dependencies
+        run: flutter pub get
 
-      - name: Commit existing changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Auto" || echo "Nothing"
+      - name: Build APK
+        run: flutter build apk --release
 
-      - run: flutter pub get
-      - run: flutter build apk --release
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: parsavip-apk
           path: build/app/outputs/flutter-apk/*.apk
