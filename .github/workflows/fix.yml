@@ -1,4 +1,4 @@
-name: Build PARSAVIP with VPN
+name: Build PARSAVIP APK
 
 on:
   push:
@@ -27,56 +27,15 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Clean android
-        run: |
-          rm -rf android .metadata .dart_tool build
+      - name: Get dependencies
+        run: flutter pub get
 
-      - name: Generate fresh android
-        run: |
-          flutter create --platforms=android --project-name=parsavip --org=com.parsavip .
+      - name: Build APK
+        run: flutter build apk --release
 
-      - name: Create Kotlin folders
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/parsavip/app
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a
-          ls -la android/app/src/main/kotlin/com/parsavip/
-
-      - name: Clean lib
-        run: |
-          rm -rf lib test
-          mkdir -p lib/theme lib/models lib/services lib/data lib/providers lib/widgets lib/screens
-
-      - name: Download sing-box arm64
-        run: |
-          cd /tmp
-          wget -q "https://github.com/SagerNet/sing-box/releases/download/v1.10.1/sing-box-1.10.1-android-arm64.tar.gz"
-          tar -xzf sing-box-1.10.1-android-arm64.tar.gz
-          cp sing-box-1.10.1-android-arm64/sing-box \
-             "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
-          chmod +x "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/libsingbox.so"
-          ls -la "$GITHUB_WORKSPACE/android/app/src/main/jniLibs/arm64-v8a/"
-
-      - name: Write pubspec
-        run: |
-          cat > pubspec.yaml << 'EOF'
-          name: parsavip
-          description: PARSAVIP VPN
-          publish_to: 'none'
-          version: 1.0.0+1
-          environment:
-            sdk: '>=3.3.0 <4.0.0'
-          dependencies:
-            flutter:
-              sdk: flutter
-            cupertino_icons: ^1.0.6
-            provider: ^6.1.1
-            google_fonts: ^6.2.1
-            http: ^1.1.0
-            crypto: ^3.0.3
-          dev_dependencies:
-            flutter_test:
-              sdk: flutter
-            flutter_lints: ^3.0.0
-          flutter:
-            uses-material-design: true
-          EOF
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: parsavip-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 30
