@@ -1,4 +1,4 @@
-name: Build APK
+          name: Build APK
 
 on:
   push:
@@ -25,24 +25,6 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Fix MainActivity.kt
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/parsavip/parsavip
-          cat > android/app/src/main/kotlin/com/parsavip/parsavip/MainActivity.kt << 'EOF'
-          package com.parsavip.parsavip
-
-          import io.flutter.embedding.android.FlutterActivity
-          import io.flutter.embedding.engine.FlutterEngine
-          import com.github.blueboytm.flutter_v2ray.v2ray.V2rayController
-
-          class MainActivity : FlutterActivity() {
-              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-                  super.configureFlutterEngine(flutterEngine)
-                  V2rayController.init(this, applicationInfo.icon, "PARSAVIP")
-              }
-          }
-          EOF
-
       - name: Fix AndroidManifest.xml
         run: |
           cat > android/app/src/main/AndroidManifest.xml << 'EOF'
@@ -56,8 +38,7 @@ jobs:
                   android:label="PARSAVIP"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
-                  android:usesCleartextTraffic="true"
-                  android:extractNativeLibs="true">
+                  android:usesCleartextTraffic="true">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -92,7 +73,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Fix MainActivity R + AndroidManifest" || echo "Nothing to commit"
+          git commit -m "Remove extractNativeLibs" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
