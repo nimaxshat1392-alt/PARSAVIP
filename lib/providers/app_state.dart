@@ -25,12 +25,7 @@ class AppState extends ChangeNotifier {
   VpnConfig? get activeConfig => vpn.current;
 
   Future<void> init() async {
-    await logs.init();
-    await logs.add(LogLevel.info, 'App started');
-
-    // 👇 مقداردهی اولیه سرویس VPN (بسیار مهم)
-    await vpn.initialize();
-
+    // اول کانفیگ‌ها لود شن
     configs = await storage.loadConfigs();
     if (configs.isEmpty) {
       final parsed = <VpnConfig>[];
@@ -45,10 +40,6 @@ class AppState extends ChangeNotifier {
       }
       configs = parsed;
       await storage.saveConfigs(configs);
-      await logs.add(
-        LogLevel.success,
-        'Loaded ${configs.length} configs',
-      );
     }
 
     final selId = await storage.loadSelectedId();
@@ -65,6 +56,8 @@ class AppState extends ChangeNotifier {
     loading = false;
     notifyListeners();
 
+    await logs.init();
+    await logs.add(LogLevel.info, 'App started');
     vpn.statusStream.listen((_) => notifyListeners());
   }
 
