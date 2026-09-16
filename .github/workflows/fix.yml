@@ -2,20 +2,39 @@ name: Build APK
 
 on: [push, workflow_dispatch]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+
+      - name: Ensure folders
+        run: mkdir -p lib/services
+
+      - name: Commit existing changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Auto" || echo "Nothing"
+
       - run: flutter pub get
       - run: flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
           name: apk
