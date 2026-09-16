@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter_singbox_client/flutter_singbox_client.dart';
+import 'package:flutter_singbox_client/flutter_singbox_client.dart' hide LogLevel;
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
