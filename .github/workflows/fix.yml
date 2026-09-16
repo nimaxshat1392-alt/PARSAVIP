@@ -40,37 +40,16 @@ jobs:
       - name: Restore pubspec
         run: mv pubspec_backup.yaml pubspec.yaml
 
-      - name: Debug - show BEFORE
+      - name: Force Gradle 8.3
         run: |
-          echo "=== gradle-wrapper.properties BEFORE ==="
-          cat android/gradle/wrapper/gradle-wrapper.properties || echo "NOT FOUND"
-          echo ""
-          echo "=== settings.gradle BEFORE ==="
-          cat android/settings.gradle || echo "NOT FOUND"
-
-      - name: Force Gradle 8.3 in wrapper properties
-        run: |
-          WRAPPER_FILE=android/gradle/wrapper/gradle-wrapper.properties
-          sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-all\.zip|gradle-8.3-all.zip|g' "$WRAPPER_FILE"
-          sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-bin\.zip|gradle-8.3-bin.zip|g' "$WRAPPER_FILE"
-
-      - name: Debug - show AFTER
-        run: |
-          echo "=== gradle-wrapper.properties AFTER ==="
-          cat android/gradle/wrapper/gradle-wrapper.properties
-
-      - name: Clean old gradle caches
-        run: |
-          rm -rf ~/.gradle/caches/7.6.3
-          rm -rf ~/.gradle/wrapper/dists/gradle-7.6.3-all || true
-          rm -rf ~/.gradle/wrapper/dists/gradle-7.6.3-bin || true
+          sed -i -E 's|gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-all\.zip|gradle-8.3-all.zip|g' android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Commit android folder
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add android/
-          git commit -m "Force Gradle 8.3" || echo "Nothing to commit"
+          git commit -m "Fix Gradle 8.3" || echo "Nothing to commit"
           git push || echo "Nothing to push"
 
       - name: Get dependencies
