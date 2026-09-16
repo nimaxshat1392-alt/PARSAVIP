@@ -44,7 +44,10 @@ class VpnService {
 
   Future<void> initialize() async {
     try {
-      await _v2ray.initializeV2Ray();
+      await _v2ray.initialize(
+        notificationIconResourceType: "mipmap",
+        notificationIconResourceName: "ic_launcher",
+      );
       await _logs.add(LogLevel.info, 'V2Ray (Xray) initialized');
     } catch (e) {
       _lastError = e.toString();
@@ -63,11 +66,11 @@ class VpnService {
       await _logs.add(LogLevel.info, 'Connecting: ${config.protocolShort} @ ${config.host}');
 
       // ۱. پارس کردن لینک اشتراک
-      final parser = V2ray.parseFromURL(config.rawUri);
-      final fullConfig = parser.getFullConfiguration();
+      final V2RayURL parser = V2ray.parseFromURL(config.rawUri);
+      final String fullConfig = parser.getFullConfiguration();
 
       // ۲. درخواست مجوز VPN
-      final permitted = await _v2ray.requestPermission();
+      final bool permitted = await _v2ray.requestPermission();
       if (!permitted) throw Exception('دسترسی VPN رد شد');
 
       // ۳. شروع V2Ray در حالت TUN (VPN کامل)
