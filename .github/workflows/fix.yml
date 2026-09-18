@@ -22,17 +22,41 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Download AndroidLibXrayLite
+      - name: Download libXray.aar (with fallback URLs)
         run: |
           mkdir -p android/app/libs
-          cd /tmp
-          # دانلود آخرین نسخه از GitHub
-          LATEST_TAG=$(curl -s https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/latest | grep -oP '"tag_name": "\K[^"]+')
-          echo "Latest tag: $LATEST_TAG"
-          curl -L -o libXray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/${LATEST_TAG}/libXray.aar"
-          ls -la libXray.aar
-          cp libXray.aar "$GITHUB_WORKSPACE/android/app/libs/"
-          ls -la "$GITHUB_WORKSPACE/android/app/libs/"
+          cd android/app/libs
+          
+          # تلاش از چند URL مختلف
+          URLS=(
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/v25.9.11/libXray.aar"
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/v25.8.31/libXray.aar"
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/v25.7.21/libXray.aar"
+          )
+          
+          SUCCESS=0
+          for URL in "${URLS[@]}"; do
+            echo "Trying: $URL"
+            curl -L -f -o libXray.aar "$URL" || continue
+            SIZE=$(stat -c%s libXray.aar 2>/dev/null || stat -f%z libXray.aar)
+            echo "Downloaded size: $SIZE bytes"
+            if [ "$SIZE" -gt 1000000 ]; then
+              echo "✅ File looks valid (>1MB)"
+              SUCCESS=1
+              break
+            else
+              echo "❌ File too small, trying next URL"
+              rm -f libXray.aar
+            fi
+          done
+          
+          if [ "$SUCCESS" -eq 0 ]; then
+            echo "❌ All URLs failed!"
+            exit 1
+          fi
+          
+          ls -la
+          file libXray.aar
 
       - name: Get dependencies
         run: flutter pub get
