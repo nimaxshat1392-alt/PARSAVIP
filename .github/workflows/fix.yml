@@ -22,33 +22,72 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install gomobile
+      - name: Add JitPack repo
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          if [ -f android/settings.gradle.kts ]; then
+            if ! grep -q "jitpack.io" android/settings.gradle.kts; then
+              sed -i 's|mavenCentral()|mavenCentral()\n        maven { url = uri("https://jitpack.io") }|g' android/settings.gradle.kts
+            fi
+          fi
+          echo "=== settings.gradle.kts ==="
+          cat android/settings.gradle.kts
 
-      - name: Init gomobile
+      - name: Rewrite app build.gradle.kts
         run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          gomobile init
+          cat > android/app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("kotlin-android")
+              id("dev.flutter.flutter-gradle-plugin")
+          }
 
-      - name: Clone and build AndroidLibXrayLite
-        run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          git clone https://github.com/2dust/AndroidLibXrayLite.git /tmp/AndroidLibXrayLite
-          cd /tmp/AndroidLibXrayLite
-          go mod tidy
-          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libv2ray.aar -v .
-          ls -la libv2ray.aar
-          mkdir -p $GITHUB_WORKSPACE/android/app/libs
-          cp libv2ray.aar $GITHUB_WORKSPACE/android/app/libs/
-          ls -la $GITHUB_WORKSPACE/android/app/libs/
+          android {
+              namespace = "com.parsavip.parsavip"
+              compileSdk = 35
+              ndkVersion = flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              defaultConfig {
+                  applicationId = "com.parsavip.parsavip"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+                  multiDexEnabled = true
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.getByName("debug")
+                      isMinifyEnabled = false
+                      isShrinkResources = false
+                  }
+              }
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          }
+
+          dependencies {
+              implementation("com.github.2dust:AndroidLibXrayLite:v25.10.13")
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+          }
+
+          flutter {
+              source = "../.."
+          }
+          EOF
+          echo "=== app/build.gradle.kts ==="
+          cat android/app/build.gradle.kts
 
       - name: Get dependencies
         run: flutter pub get
