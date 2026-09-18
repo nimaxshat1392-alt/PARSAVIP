@@ -27,14 +27,19 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Download build script
+        run: |
+          curl -L -o /tmp/build_android_libxray.sh \
+            https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh
+          chmod +x /tmp/build_android_libxray.sh
+
       - name: Build Xray core from source
         run: |
           mkdir -p android/app/libs
-          cd /tmp
-          curl -L -o build_android_libxray.sh \
-            https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh
-          chmod +x build_android_libxray.sh
-          bash build_android_libxray.sh
+          # اجرا از ریشه پروژه (جایی که pubspec.yaml هست)
+          cd $GITHUB_WORKSPACE
+          bash /tmp/build_android_libxray.sh
+          echo "=== Files in libs ==="
           ls -la android/app/libs/ || true
 
       - name: Get dependencies
