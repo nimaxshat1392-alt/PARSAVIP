@@ -10,9 +10,11 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
+import libv2ray.CoreCallbackHandler
+import libv2ray.CoreController
 import libv2ray.Libv2ray
-import org.json.JSONObject
-import org.json.JSONArray
+import java.io.File
+import java.io.FileOutputStream
 
 class ParsaVpnService : VpnService() {
 
@@ -28,6 +30,7 @@ class ParsaVpnService : VpnService() {
     }
 
     private var tun: ParcelFileDescriptor? = null
+    private var controller: CoreController? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -37,8 +40,8 @@ class ParsaVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val config = intent.getStringExtra("config") ?: ""
-                startVpn(config)
+                val jsonConfig = intent.getStringExtra("config") ?: ""
+                startVpn(jsonConfig)
             }
             ACTION_STOP -> {
                 stopVpn()
@@ -48,8 +51,9 @@ class ParsaVpnService : VpnService() {
         return START_STICKY
     }
 
-    private fun startVpn(shareLink: String) {
+    private fun startVpn(jsonConfig: String) {
         try {
+            // ۱. ساخت TUN
             val builder = Builder()
             builder.setSession("PARSAVIP")
             builder.setMtu(1500)
@@ -57,14 +61,8 @@ class ParsaVpnService : VpnService() {
             builder.addRoute("0.0.0.0", 0)
             builder.addDnsServer("1.1.1.1")
             builder.addDnsServer("8.8.8.8")
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (e: Exception) {
-                Log.w(TAG, "Cannot exclude self: ${e.message}")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                builder.setMetered(false)
-            }
+            try { builder.addDisallowedApplication(packageName) } catch (_: Exception) {}
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
             tun = builder.establish()
             if (tun == null) {
@@ -72,14 +70,33 @@ class ParsaVpnService : VpnService() {
                 return
             }
 
+            // ۲. ذخیره config در فایل
             val datDir = filesDir.absolutePath
-            val configJson = Libv2ray.convertShareLinksToXrayJson(shareLink)
-            Log.i(TAG, "Config JSON: $configJson")
+            val configFile = File(filesDir, "config.json")
+            FileOutputStream(configFile).use { it.write(jsonConfig.toByteArray()) }
 
-            val fullConfig = injectTunInbound(configJson)
-            Log.i(TAG, "Full config: $fullConfig")
+            // ۳. init env
+            Libv2ray.initCoreEnv(datDir, configFile.absolutePath)
 
-            Libv2ray.runXrayFromJSON(datDir, "config.json", fullConfig)
+            // ۴. ساخت callback handler
+            val handler = object : CoreCallbackHandler() {
+                override fun onEmitStatus(code: Long, message: String?): Boolean {
+                    Log.i(TAG, "status: code=$code msg=$message")
+                    return true
+                }
+                override fun startup(): Boolean = true
+                override fun shutdown(): Boolean = true
+            }
+
+            // ۵. ساخت و اجرای controller
+            controller = Libv2ray.newCoreController(handler)
+            val code = controller?.startLoop(datDir, configFile.absolutePath)
+
+            Log.i(TAG, "startLoop code=$code")
+            if (code == null || code < 0) {
+                eventSink?.error("START_FAIL", "startLoop failed: $code", null)
+                return
+            }
 
             isConnected = true
             showNotification()
@@ -91,49 +108,13 @@ class ParsaVpnService : VpnService() {
         }
     }
 
-    private fun injectTunInbound(jsonStr: String): String {
-        val root = JSONObject(jsonStr)
-
-        val tunInbound = JSONObject().apply {
-            put("tag", "tun-in")
-            put("protocol", "tun")
-            put("settings", JSONObject().apply {
-                put("address", "172.19.0.1/30")
-                put("mtu", 1500)
-                put("userLevel", 0)
-                put("autoSystemRoutingTable", true)
-            })
-            put("sniffing", JSONObject().apply {
-                put("enabled", true)
-                put("destOverride", JSONArray(listOf("http", "tls", "quic")))
-                put("routeOnly", false)
-            })
-        }
-
-        val inbounds = JSONArray()
-        inbounds.put(tunInbound)
-        root.put("inbounds", inbounds)
-
-        val routing = JSONObject().apply {
-            put("domainStrategy", "IPIfNonMatch")
-            put("rules", JSONArray())
-        }
-        root.put("routing", routing)
-
-        val dns = JSONObject().apply {
-            put("servers", JSONArray(listOf("1.1.1.1", "8.8.8.8")))
-        }
-        root.put("dns", dns)
-
-        return root.toString()
-    }
-
     private fun stopVpn() {
         isConnected = false
         try {
-            Libv2ray.stopXray()
+            controller?.stopLoop()
+            controller = null
         } catch (e: Exception) {
-            Log.e(TAG, "stopXray error: ${e.message}")
+            Log.e(TAG, "stopLoop error: ${e.message}")
         }
         try {
             tun?.close()
