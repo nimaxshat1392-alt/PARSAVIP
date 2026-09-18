@@ -1,7 +1,7 @@
 import 'dart:convert';
 import '../models/vpn_config.dart';
 
-/// تبدیل URI کانفیگ به JSON استاندارد Sing-box
+/// تبدیل URI کانفیگ به JSON استاندارد Sing-box (سازگار با 1.12+)
 class SingboxConfig {
   static String build(VpnConfig config) {
     final u = Uri.parse(config.rawUri);
@@ -25,21 +25,15 @@ class SingboxConfig {
         throw 'پروتکل پشتیبانی نمی‌شود';
     }
 
+    // ⭐ ساده‌ترین ساختار ممکن
     final fullConfig = {
       'log': {'level': 'warn'},
-      'dns': {
-        'servers': [
-          {'type': 'udp', 'tag': 'cf', 'server': '1.1.1.1'},
-          {'type': 'udp', 'tag': 'gg', 'server': '8.8.8.8'},
-        ],
-      },
       'inbounds': [
         {
           'type': 'tun',
           'tag': 'tun-in',
           'address': ['172.19.0.1/30'],
           'auto_route': true,
-          'strict_route': true,
           'stack': 'system',
           'sniff': true,
         }
@@ -49,12 +43,7 @@ class SingboxConfig {
         {'type': 'direct', 'tag': 'direct'},
       ],
       'route': {
-        'rules': [
-          {'ip_is_private': true, 'outbound': 'direct'},
-          {'protocol': 'dns', 'outbound': 'direct'},
-        ],
         'final': 'proxy',
-        'auto_detect_interface': true,
       },
     };
 
