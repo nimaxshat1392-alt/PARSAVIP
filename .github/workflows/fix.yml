@@ -31,15 +31,12 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Build AAR (older version with simple API)
+      - name: Build AAR
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
           git clone https://github.com/2dust/AndroidLibXrayLite.git /tmp/lib
           cd /tmp/lib
-          # ⭐ چک‌اوت به نسخه قدیمی که API ساده داره
-          git fetch --tags
-          git checkout v25.3.6 || git checkout v25.2.28 || git checkout v1.8.8
           go mod tidy
           gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libv2ray.aar -v -ldflags="-checklinkname=0" .
           mkdir -p $GITHUB_WORKSPACE/android/app/libs
