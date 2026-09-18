@@ -1,4 +1,3 @@
-
 name: Inspect AAR
 
 on: [push, workflow_dispatch]
@@ -43,17 +42,16 @@ jobs:
           mkdir -p /tmp/aar_extract
           cd /tmp/aar_extract
           unzip -o /tmp/lib/libv2ray.aar
-          ls -la
-          echo "=== classes.jar contents ==="
-          unzip -l classes.jar | head -50
-          echo ""
-          echo "=== Extract classes.jar ==="
           mkdir -p /tmp/aar_extract/classes
           cd /tmp/aar_extract/classes
           unzip -o ../classes.jar
-          echo ""
-          echo "=== All .class files ==="
           find . -name "*.class" | sort
+
+      - name: Inspect Libv2ray methods
+        run: |
+          cd /tmp/aar_extract/classes
+          echo "=== Libv2ray public methods ==="
+          javap -p libv2ray/Libv2ray.class
           echo ""
-          echo "=== Try javap on Libv2ray ==="
-          find . -name "*v2ray*.class" -o -name "*libv2ray*.class" | head -20
+          echo "=== CoreController methods ==="
+          javap -p libv2ray/CoreController.class
