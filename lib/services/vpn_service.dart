@@ -8,7 +8,6 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  final VlessController _vless = VlessController();
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -31,7 +30,7 @@ class VpnService {
   Future<void> initialize() async {
     if (_initialized) return;
     try {
-      await _vless.initializeVless(
+      await FlutterVless.initializeVless(
         notificationIconResourceType: "mipmap",
         notificationIconResourceName: "ic_launcher",
       );
@@ -57,8 +56,8 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort} @ ${config.host}');
 
-      // ⭐ URI رو مستقیم می‌دیم — بدون JSON!
-      final started = await _vless.startVless(
+      // ⭐ URI رو مستقیم می‌دیم
+      final started = await FlutterVless.startVless(
         remark: config.name,
         url: config.rawUri,
         proxyOnly: false,
@@ -85,7 +84,7 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await _vless.stopVless();
+      await FlutterVless.stopVless();
     } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
