@@ -32,12 +32,11 @@ class SingboxConfig {
           'type': 'tun',
           'tag': 'tun-in',
           'interface_name': 'tun0',
-          'inet4_address': '172.19.0.1/30',
+          'address': ['172.19.0.1/30'],
           'auto_route': true,
           'strict_route': false,
           'stack': 'system',
           'sniff': true,
-          'sniff_override_destination': false,
         }
       ],
       'outbounds': [
