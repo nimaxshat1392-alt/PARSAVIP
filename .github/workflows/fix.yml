@@ -22,25 +22,70 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Download build script
+      - name: Add JitPack to settings.gradle.kts
         run: |
-          curl -L -o /tmp/build_android_libxray.sh \
-            https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh
-          chmod +x /tmp/build_android_libxray.sh
+          if [ -f android/settings.gradle.kts ]; then
+            sed -i 's|mavenCentral()|mavenCentral()\n        maven { url = uri("https://jitpack.io") }|g' android/settings.gradle.kts
+            echo "=== settings.gradle.kts ==="
+            cat android/settings.gradle.kts
+          fi
 
-      - name: Build Xray core from source
+      - name: Rewrite app build.gradle.kts
         run: |
-          mkdir -p android/app/libs
-          # اجرا از ریشه پروژه (جایی که pubspec.yaml هست)
-          cd $GITHUB_WORKSPACE
-          bash /tmp/build_android_libxray.sh
-          echo "=== Files in libs ==="
-          ls -la android/app/libs/ || true
+          cat > android/app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("kotlin-android")
+              id("dev.flutter.flutter-gradle-plugin")
+          }
+
+          android {
+              namespace = "com.parsavip.parsavip"
+              compileSdk = 35
+              ndkVersion = flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              defaultConfig {
+                  applicationId = "com.parsavip.parsavip"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+                  multiDexEnabled = true
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.getByName("debug")
+                      isMinifyEnabled = false
+                      isShrinkResources = false
+                  }
+              }
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          }
+
+          dependencies {
+              implementation("com.github.2dust:AndroidLibXrayLite:25.9.11")
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+          }
+
+          flutter {
+              source = "../.."
+          }
+          EOF
+          echo "=== app/build.gradle.kts ==="
+          cat android/app/build.gradle.kts
 
       - name: Get dependencies
         run: flutter pub get
