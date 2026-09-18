@@ -8,6 +8,7 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
+  late FlutterVless _vless;
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -27,12 +28,28 @@ class VpnService {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
+  VpnService() {
+    // ⭐ اینجا نمونه رو می‌سازیم (نه استاتیک)
+    _vless = FlutterVless(
+      onStatusChanged: (status) {
+        final s = status.connectionState.name.toLowerCase();
+        if (s.contains('connect') && !s.contains('disconnect')) {
+          _status = VpnStatus.connected;
+          _statusCtrl.add(_status);
+        } else if (s.contains('disconnect')) {
+          _status = VpnStatus.disconnected;
+          _statusCtrl.add(_status);
+        }
+      },
+    );
+  }
+
   Future<void> initialize() async {
     if (_initialized) return;
     try {
-      await FlutterVless.initializeVless(
-        notificationIconResourceType: "mipmap",
-        notificationIconResourceName: "ic_launcher",
+      await _vless.initializeVless(
+        providerBundleIdentifier: 'com.parsavip.parsavip',
+        groupIdentifier: 'group.com.parsavip.parsavip',
       );
       _initialized = true;
       await _logs.add(LogLevel.info, 'Xray core initialized');
@@ -54,16 +71,21 @@ class VpnService {
         await initialize();
       }
 
-      await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort} @ ${config.host}');
+      await _logs.add(LogLevel.info, 'Parsing: ${config.protocolShort}');
 
-      // ⭐ URI رو مستقیم می‌دیم
-      final started = await FlutterVless.startVless(
+      // ⭐ مرحله مهم: URI رو به config تبدیل کن
+      final parsed = FlutterVless.parse(config.rawUri);
+      final fullConfig = parsed.getFullConfiguration();
+
+      await _logs.add(LogLevel.info, 'Requesting permission...');
+      final permitted = await _vless.requestPermission();
+      if (!permitted) throw Exception('VPN permission denied');
+
+      await _logs.add(LogLevel.info, 'Starting Xray...');
+      await _vless.startVless(
         remark: config.name,
-        url: config.rawUri,
-        proxyOnly: false,
+        config: fullConfig,
       );
-
-      if (!started) throw Exception('Xray core start failed');
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
@@ -84,7 +106,7 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await FlutterVless.stopVless();
+      await _vless.stopVless();
     } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
