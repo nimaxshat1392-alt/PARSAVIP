@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'package:flutter_vless/flutter_vless.dart';
+import 'dart:io';
 import '../models/vpn_config.dart';
+import 'native_vpn.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
 
@@ -8,16 +9,15 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  late FlutterVless _vless;
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
-  bool _initialized = false;
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
   Timer? _timer;
   Duration _duration = Duration.zero;
+  StreamSubscription? _sub;
 
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
@@ -28,35 +28,18 @@ class VpnService {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  VpnService() {
-    // ⭐ اینجا نمونه رو می‌سازیم (نه استاتیک)
-    _vless = FlutterVless(
-      onStatusChanged: (status) {
-        final s = status.connectionState.name.toLowerCase();
-        if (s.contains('connect') && !s.contains('disconnect')) {
-          _status = VpnStatus.connected;
-          _statusCtrl.add(_status);
-        } else if (s.contains('disconnect')) {
-          _status = VpnStatus.disconnected;
-          _statusCtrl.add(_status);
-        }
-      },
-    );
-  }
-
   Future<void> initialize() async {
-    if (_initialized) return;
-    try {
-      await _vless.initializeVless(
-        providerBundleIdentifier: 'com.parsavip.parsavip',
-        groupIdentifier: 'group.com.parsavip.parsavip',
-      );
-      _initialized = true;
-      await _logs.add(LogLevel.info, 'Xray core initialized');
-    } catch (e) {
-      _lastError = e.toString();
-      await _logs.add(LogLevel.error, 'Init failed: $e');
-    }
+    if (!Platform.isAndroid) return;
+    _sub = NativeVpn.events.listen((event) {
+      final ev = event['event'];
+      if (ev == 'connected') {
+        _status = VpnStatus.connected;
+        _statusCtrl.add(_status);
+      } else if (ev == 'disconnected') {
+        _status = VpnStatus.disconnected;
+        _statusCtrl.add(_status);
+      }
+    }, onError: (_) {});
   }
 
   Future<bool> connect(VpnConfig config) async {
@@ -67,36 +50,27 @@ class VpnService {
     _lastError = null;
 
     try {
-      if (!_initialized) {
-        await initialize();
+      await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'URI: ${config.rawUri}');
+
+      final ok = await NativeVpn.start(config.rawUri);
+
+      if (!ok) {
+        // منتظر تأیید مجوز
+        await _logs.add(LogLevel.info, 'Waiting for VPN permission...');
+        return false;
       }
-
-      await _logs.add(LogLevel.info, 'Parsing: ${config.protocolShort}');
-
-      // ⭐ مرحله مهم: URI رو به config تبدیل کن
-      final parsed = FlutterVless.parse(config.rawUri);
-      final fullConfig = parsed.getFullConfiguration();
-
-      await _logs.add(LogLevel.info, 'Requesting permission...');
-      final permitted = await _vless.requestPermission();
-      if (!permitted) throw Exception('VPN permission denied');
-
-      await _logs.add(LogLevel.info, 'Starting Xray...');
-      await _vless.startVless(
-        remark: config.name,
-        config: fullConfig,
-      );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected');
+      await _logs.add(LogLevel.success, '✅ Connected via Xray core');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, '❌ $e');
+      await _logs.add(LogLevel.error, '❌ $_lastError');
       return false;
     }
   }
@@ -106,7 +80,7 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await _vless.stopVless();
+      await NativeVpn.stop();
     } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
@@ -138,6 +112,7 @@ class VpnService {
 
   void dispose() {
     _timer?.cancel();
+    _sub?.cancel();
     _statusCtrl.close();
     _durationCtrl.close();
   }
