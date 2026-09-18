@@ -22,70 +22,29 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Add JitPack to settings.gradle.kts
+      - name: Download libv2ray.aar
         run: |
-          if [ -f android/settings.gradle.kts ]; then
-            sed -i 's|mavenCentral()|mavenCentral()\n        maven { url = uri("https://jitpack.io") }|g' android/settings.gradle.kts
-            echo "=== settings.gradle.kts ==="
-            cat android/settings.gradle.kts
+          mkdir -p android/app/libs
+          cd android/app/libs
+          
+          # لینک دانلود از مخزن AndroidLibXrayLite
+          URL="https://github.com/nickolasgasworking/AndroidLibXrayLite/releases/latest/download/libv2ray.aar"
+          
+          echo "Downloading from: $URL"
+          curl -L -f -o libv2ray.aar "$URL"
+          
+          # بررسی حجم فایل برای اطمینان از صحت دانلود
+          SIZE=$(stat -c%s libv2ray.aar)
+          echo "Downloaded size: $SIZE bytes"
+          
+          # اگر حجم فایل کمتر از ۱ مگابایت باشد، یعنی دانلود ناموفق بوده
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "❌ Downloaded file is too small. Download failed."
+            exit 1
           fi
-
-      - name: Rewrite app build.gradle.kts
-        run: |
-          cat > android/app/build.gradle.kts << 'EOF'
-          plugins {
-              id("com.android.application")
-              id("kotlin-android")
-              id("dev.flutter.flutter-gradle-plugin")
-          }
-
-          android {
-              namespace = "com.parsavip.parsavip"
-              compileSdk = 35
-              ndkVersion = flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              defaultConfig {
-                  applicationId = "com.parsavip.parsavip"
-                  minSdk = 21
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0.0"
-                  multiDexEnabled = true
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig = signingConfigs.getByName("debug")
-                      isMinifyEnabled = false
-                      isShrinkResources = false
-                  }
-              }
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-              }
-          }
-
-          dependencies {
-              implementation("com.github.2dust:AndroidLibXrayLite:25.9.11")
-              implementation("androidx.core:core-ktx:1.12.0")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-          }
-
-          flutter {
-              source = "../.."
-          }
-          EOF
-          echo "=== app/build.gradle.kts ==="
-          cat android/app/build.gradle.kts
+          
+          ls -la
+          file libv2ray.aar
 
       - name: Get dependencies
         run: flutter pub get
