@@ -3,6 +3,7 @@ import 'package:flutter_singbox_client/flutter_singbox_client.dart' hide LogLeve
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
+import 'singbox_config.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
@@ -29,7 +30,6 @@ class VpnService {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  /// مقداردهی اولیه — چندین بار صدا زدنش امنه
   Future<void> initialize() async {
     if (_initialized) return;
     try {
@@ -55,7 +55,6 @@ class VpnService {
     _lastError = null;
 
     try {
-      // ⭐ مرحله حیاتی: قبل از اتصال، هسته رو initialize کن
       if (!_initialized) {
         await _logs.add(LogLevel.info, 'Initializing Sing-box core...');
         await initialize();
@@ -64,20 +63,21 @@ class VpnService {
         throw Exception('هسته Sing-box راه‌اندازی نشد');
       }
 
-      await _logs.add(LogLevel.info, 'Validating config: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'Building JSON config: ${config.protocolShort}');
 
-      // ۱. اعتبارسنجی کانفیگ
-      await _client.checkConfig(config.rawUri);
-      await _logs.add(LogLevel.info, 'Config is valid');
+      // ⭐ مرحله حیاتی: تبدیل URI به JSON استاندارد Sing-box
+      final jsonConfig = SingboxConfig.build(config);
 
-      // ۲. درخواست مجوز VPN
+      await _logs.add(LogLevel.info, 'Validating config...');
+      await _client.checkConfig(jsonConfig);
+      await _logs.add(LogLevel.info, 'Config is valid ✅');
+
       final permitted = await _client.requestVPNPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'Permission granted');
 
-      // ۳. اتصال در حالت TUN
       await _client.connect(SessionOptions(
-        config: config.rawUri,
+        config: jsonConfig,
         networkMode: NetworkMode.vpn,
         killSwitch: false,
         notification: const NotificationConfig(
@@ -91,7 +91,7 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected via Sing-box');
+      await _logs.add(LogLevel.success, '✅ Connected');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
