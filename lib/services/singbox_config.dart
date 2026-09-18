@@ -1,7 +1,7 @@
 import 'dart:convert';
 import '../models/vpn_config.dart';
 
-/// تبدیل URI کانفیگ به JSON استاندارد Sing-box
+/// تبدیل URI کانفیگ به JSON استاندارد Sing-box (نسخه حداقلی)
 class SingboxConfig {
   static String build(VpnConfig config) {
     final u = Uri.parse(config.rawUri);
@@ -25,30 +25,22 @@ class SingboxConfig {
         throw 'پروتکل پشتیبانی نمی‌شود';
     }
 
+    // ⭐ ساختار حداقلی — فقط چیزهایی که Sing-box 1.12+ قطعاً قبول داره
     final fullConfig = {
       'log': {'level': 'warn'},
       'inbounds': [
         {
           'type': 'tun',
           'tag': 'tun-in',
-          'interface_name': 'tun0',
           'address': ['172.19.0.1/30'],
           'auto_route': true,
-          'strict_route': false,
           'stack': 'system',
-          'sniff': true,
         }
       ],
       'outbounds': [
         outbound,
         {'type': 'direct', 'tag': 'direct'},
       ],
-      'route': {
-        'rules': [
-          {'ip_is_private': true, 'outbound': 'direct'},
-        ],
-        'final': 'proxy',
-      },
     };
 
     return const JsonEncoder.withIndent('  ').convert(fullConfig);
@@ -77,7 +69,6 @@ class SingboxConfig {
       result['tls'] = {
         'enabled': true,
         'server_name': sni,
-        'insecure': false,
       };
     } else if (security == 'reality') {
       result['tls'] = {
@@ -136,7 +127,6 @@ class SingboxConfig {
       result['tls'] = {
         'enabled': true,
         'server_name': sni.isNotEmpty ? sni : host,
-        'insecure': false,
       };
     }
 
@@ -170,7 +160,6 @@ class SingboxConfig {
       'tls': {
         'enabled': true,
         'server_name': sni,
-        'insecure': false,
       },
     };
 
