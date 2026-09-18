@@ -27,12 +27,6 @@ class SingboxConfig {
 
     final fullConfig = {
       'log': {'level': 'warn'},
-      'dns': {
-        'servers': [
-          {'type': 'udp', 'tag': 'google', 'server': '8.8.8.8'},
-          {'type': 'udp', 'tag': 'cloudflare', 'server': '1.1.1.1'},
-        ],
-      },
       'inbounds': [
         {
           'type': 'tun',
