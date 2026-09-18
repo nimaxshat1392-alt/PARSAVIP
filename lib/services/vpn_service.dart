@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'package:flutter_singbox_client/flutter_singbox_client.dart' hide LogLevel;
+import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
-import 'singbox_config.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
-  final SingboxClient _client = SingboxClient();
+  final VlessController _vless = VlessController();
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -19,7 +18,6 @@ class VpnService {
   final _durationCtrl = StreamController<Duration>.broadcast();
   Timer? _timer;
   Duration _duration = Duration.zero;
-  final List<StreamSubscription> _subs = [];
 
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
@@ -33,14 +31,12 @@ class VpnService {
   Future<void> initialize() async {
     if (_initialized) return;
     try {
-      await _client.initialize();
+      await _vless.initializeVless(
+        notificationIconResourceType: "mipmap",
+        notificationIconResourceName: "ic_launcher",
+      );
       _initialized = true;
-      await _logs.add(LogLevel.info, 'Sing-box core initialized');
-
-      _subs.add(_client.faultStream.listen((msg) {
-        _lastError = msg;
-        _logs.add(LogLevel.error, 'Core fault: $msg');
-      }));
+      await _logs.add(LogLevel.info, 'Xray core initialized');
     } catch (e) {
       _lastError = e.toString();
       await _logs.add(LogLevel.error, 'Init failed: $e');
@@ -56,37 +52,19 @@ class VpnService {
 
     try {
       if (!_initialized) {
-        await _logs.add(LogLevel.info, 'Initializing Sing-box core...');
         await initialize();
       }
-      if (!_initialized) {
-        throw Exception('هسته Sing-box راه‌اندازی نشد');
-      }
 
-      await _logs.add(LogLevel.info, 'Building JSON config: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort} @ ${config.host}');
 
-      // ⭐ مرحله حیاتی: تبدیل URI به JSON استاندارد Sing-box
-      final jsonConfig = SingboxConfig.build(config);
+      // ⭐ URI رو مستقیم می‌دیم — بدون JSON!
+      final started = await _vless.startVless(
+        remark: config.name,
+        url: config.rawUri,
+        proxyOnly: false,
+      );
 
-      await _logs.add(LogLevel.info, 'Validating config...');
-      await _client.checkConfig(jsonConfig);
-      await _logs.add(LogLevel.info, 'Config is valid ✅');
-
-      final permitted = await _client.requestVPNPermission();
-      if (!permitted) throw Exception('VPN permission denied');
-      await _logs.add(LogLevel.info, 'Permission granted');
-
-      await _client.connect(SessionOptions(
-        config: jsonConfig,
-        networkMode: NetworkMode.vpn,
-        killSwitch: false,
-        notification: const NotificationConfig(
-          title: 'PARSAVIP',
-          showTrafficStats: true,
-          showStopButton: true,
-          stopButtonLabel: 'Disconnect',
-        ),
-      ));
+      if (!started) throw Exception('Xray core start failed');
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
@@ -107,7 +85,7 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await _client.disconnect();
+      await _vless.stopVless();
     } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
@@ -139,9 +117,6 @@ class VpnService {
 
   void dispose() {
     _timer?.cancel();
-    for (final sub in _subs) {
-      sub.cancel();
-    }
     _statusCtrl.close();
     _durationCtrl.close();
   }
