@@ -53,7 +53,7 @@ class ParsaVpnService : VpnService() {
 
     private fun startVpn(jsonConfig: String) {
         try {
-            // ۱. ساخت TUN
+            // ۱. ساخت TUN interface
             val builder = Builder()
             builder.setSession("PARSAVIP")
             builder.setMtu(1500)
@@ -61,33 +61,50 @@ class ParsaVpnService : VpnService() {
             builder.addRoute("0.0.0.0", 0)
             builder.addDnsServer("1.1.1.1")
             builder.addDnsServer("8.8.8.8")
-            try { builder.addDisallowedApplication(packageName) } catch (_: Exception) {}
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
+
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot exclude self: ${e.message}")
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                builder.setMetered(false)
+            }
 
             tun = builder.establish()
             if (tun == null) {
+                Log.e(TAG, "TUN is null")
                 eventSink?.error("TUN_FAIL", "Cannot establish TUN", null)
                 return
             }
 
-            // ۲. ذخیره config
+            // ۲. ذخیره config در فایل
             val datDir = filesDir.absolutePath
             val configFile = File(filesDir, "config.json")
             FileOutputStream(configFile).use { it.write(jsonConfig.toByteArray()) }
+            Log.i(TAG, "Config saved to ${configFile.absolutePath}")
 
             // ۳. init env
-            Libv2ray.initCoreEnv(datDir, configFile.absolutePath)
+            try {
+                Libv2ray.initCoreEnv(datDir, configFile.absolutePath)
+                Log.i(TAG, "initCoreEnv OK")
+            } catch (e: Exception) {
+                Log.e(TAG, "initCoreEnv error", e)
+            }
 
-            // ۴. callback handler (interface, بدون پرانتز)
+            // ۴. callback handler — امضا مطابق interface: (Long, String?) -> Long
             val handler = object : CoreCallbackHandler {
                 override fun onEmitStatus(code: Long, message: String?): Long {
-                    Log.i(TAG, "status: code=$code msg=$message")
+                    Log.i(TAG, "onEmitStatus: $code - $message")
                     return 0L
                 }
+
                 override fun startup(): Long {
                     Log.i(TAG, "callback startup")
                     return 0L
                 }
+
                 override fun shutdown(): Long {
                     Log.i(TAG, "callback shutdown")
                     return 0L
@@ -96,24 +113,24 @@ class ParsaVpnService : VpnService() {
 
             // ۵. ساخت controller
             controller = Libv2ray.newCoreController(handler)
-
-            // ۶. اجرای Xray — TUN fd + config path
-            val fd = tun!!.fd
-            val code = controller?.startLoop(fd, configFile.absolutePath)
-            Log.i(TAG, "startLoop code=$code")
-
-            if (code == null || code < 0L) {
-                eventSink?.error("START_FAIL", "startLoop returned $code", null)
+            if (controller == null) {
+                eventSink?.error("CTRL_FAIL", "Cannot create CoreController", null)
                 return
             }
 
+            // ۶. اجرای Xray — startLoop(configPath, datDir)
+            val code = controller?.startLoop(configFile.absolutePath, datDir)
+            Log.i(TAG, "startLoop code=$code")
+
+            // ۷. تنظیم وضعیت
             isConnected = true
             showNotification()
             eventSink?.success(mapOf("event" to "connected"))
+            Log.i(TAG, "VPN started successfully")
 
         } catch (e: Exception) {
             Log.e(TAG, "startVpn error", e)
-            eventSink?.error("START_FAIL", e.message, null)
+            eventSink?.error("START_FAIL", e.message ?: "Unknown error", null)
         }
     }
 
@@ -122,6 +139,7 @@ class ParsaVpnService : VpnService() {
         try {
             controller?.stopLoop()
             controller = null
+            Log.i(TAG, "stopLoop OK")
         } catch (e: Exception) {
             Log.e(TAG, "stopLoop error: ${e.message}")
         }
@@ -136,7 +154,9 @@ class ParsaVpnService : VpnService() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
-                CHANNEL_ID, "VPN Status", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID,
+                "VPN Status",
+                NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
@@ -144,14 +164,16 @@ class ParsaVpnService : VpnService() {
 
     private fun showNotification() {
         val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, 0,
+            Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
         val stopIntent = Intent(this, ParsaVpnService::class.java).apply {
             action = ACTION_STOP
         }
         val stopPi = PendingIntent.getService(
-            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE
+            this, 1, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
