@@ -1,21 +1,45 @@
-name: Build APK
+name: Build PARSAVIP
 
 on: [push, workflow_dispatch]
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - run: flutter pub get
-      - run: flutter build apk --release
+
+      - name: Download AndroidLibXrayLite
+        run: |
+          mkdir -p android/app/libs
+          cd /tmp
+          # دانلود آخرین نسخه از GitHub
+          LATEST_TAG=$(curl -s https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+          echo "Latest tag: $LATEST_TAG"
+          curl -L -o libXray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/${LATEST_TAG}/libXray.aar"
+          ls -la libXray.aar
+          cp libXray.aar "$GITHUB_WORKSPACE/android/app/libs/"
+          ls -la "$GITHUB_WORKSPACE/android/app/libs/"
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
           name: apk
