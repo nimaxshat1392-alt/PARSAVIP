@@ -29,8 +29,8 @@ class SingboxConfig {
       'log': {'level': 'warn'},
       'dns': {
         'servers': [
-          {'tag': 'google', 'address': '8.8.8.8'},
-          {'tag': 'cloudflare', 'address': '1.1.1.1'},
+          {'type': 'udp', 'tag': 'google', 'server': '8.8.8.8'},
+          {'type': 'udp', 'tag': 'cloudflare', 'server': '1.1.1.1'},
         ],
       },
       'inbounds': [
@@ -53,7 +53,6 @@ class SingboxConfig {
       'route': {
         'rules': [
           {'ip_is_private': true, 'outbound': 'direct'},
-          {'protocol': 'dns', 'outbound': 'direct'},
         ],
         'final': 'proxy',
       },
