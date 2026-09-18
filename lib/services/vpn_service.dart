@@ -12,6 +12,7 @@ class VpnService {
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
+  bool _initialized = false;
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
@@ -28,14 +29,14 @@ class VpnService {
   bool get isConnected => _status == VpnStatus.connected;
   bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  /// مقداردهی اولیه هسته Sing-box (فقط یک بار در کل عمر برنامه)
+  /// مقداردهی اولیه — چندین بار صدا زدنش امنه
   Future<void> initialize() async {
+    if (_initialized) return;
     try {
-      // طبق مستندات، چندین بار صدا زدن بی‌خطر است
       await _client.initialize();
+      _initialized = true;
       await _logs.add(LogLevel.info, 'Sing-box core initialized');
 
-      // گوش دادن به خطاهای هسته (طبق best-practices پلاگین)
       _subs.add(_client.faultStream.listen((msg) {
         _lastError = msg;
         _logs.add(LogLevel.error, 'Core fault: $msg');
@@ -54,21 +55,31 @@ class VpnService {
     _lastError = null;
 
     try {
+      // ⭐ مرحله حیاتی: قبل از اتصال، هسته رو initialize کن
+      if (!_initialized) {
+        await _logs.add(LogLevel.info, 'Initializing Sing-box core...');
+        await initialize();
+      }
+      if (!_initialized) {
+        throw Exception('هسته Sing-box راه‌اندازی نشد');
+      }
+
       await _logs.add(LogLevel.info, 'Validating config: ${config.protocolShort}');
 
-      // ۱. اعتبارسنجی کانفیگ قبل از اتصال (طبق best-practices)
+      // ۱. اعتبارسنجی کانفیگ
       await _client.checkConfig(config.rawUri);
       await _logs.add(LogLevel.info, 'Config is valid');
 
       // ۲. درخواست مجوز VPN
       final permitted = await _client.requestVPNPermission();
       if (!permitted) throw Exception('VPN permission denied');
+      await _logs.add(LogLevel.info, 'Permission granted');
 
-      // ۳. اتصال در حالت VPN (TUN) با تنظیمات پیشرفته
+      // ۳. اتصال در حالت TUN
       await _client.connect(SessionOptions(
         config: config.rawUri,
-        networkMode: NetworkMode.vpn, // حالت تونل کامل
-        killSwitch: false, // در صورت نیاز true کنید
+        networkMode: NetworkMode.vpn,
+        killSwitch: false,
         notification: const NotificationConfig(
           title: 'PARSAVIP',
           showTrafficStats: true,
@@ -80,13 +91,13 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected via Sing-box (TUN)');
+      await _logs.add(LogLevel.success, '✅ Connected via Sing-box');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, '❌ Connect failed: $e');
+      await _logs.add(LogLevel.error, '❌ $e');
       return false;
     }
   }
