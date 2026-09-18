@@ -10,11 +10,8 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
-import libv2ray.CoreCallbackHandler
-import libv2ray.CoreController
-import libv2ray.Libv2ray
+import libXray.LibXray
 import java.io.File
-import java.io.FileOutputStream
 
 class ParsaVpnService : VpnService() {
 
@@ -30,7 +27,6 @@ class ParsaVpnService : VpnService() {
     }
 
     private var tun: ParcelFileDescriptor? = null
-    private var controller: CoreController? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -40,8 +36,8 @@ class ParsaVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val jsonConfig = intent.getStringExtra("config") ?: ""
-                startVpn(jsonConfig)
+                val link = intent.getStringExtra("config") ?: ""
+                startVpn(link)
             }
             ACTION_STOP -> {
                 stopVpn()
@@ -51,9 +47,9 @@ class ParsaVpnService : VpnService() {
         return START_STICKY
     }
 
-    private fun startVpn(jsonConfig: String) {
+    private fun startVpn(shareLink: String) {
         try {
-            // ۱. ساخت TUN interface
+            // ۱. ساخت TUN
             val builder = Builder()
             builder.setSession("PARSAVIP")
             builder.setMtu(1500)
@@ -74,59 +70,22 @@ class ParsaVpnService : VpnService() {
 
             tun = builder.establish()
             if (tun == null) {
-                Log.e(TAG, "TUN is null")
                 eventSink?.error("TUN_FAIL", "Cannot establish TUN", null)
                 return
             }
 
-            // ۲. ذخیره config در فایل
+            // ۲. تبدیل share link به JSON (با متد ساده libXray)
             val datDir = filesDir.absolutePath
-            val configFile = File(filesDir, "config.json")
-            FileOutputStream(configFile).use { it.write(jsonConfig.toByteArray()) }
-            Log.i(TAG, "Config saved to ${configFile.absolutePath}")
+            val configJson = LibXray.convertShareLinksToXrayJson(shareLink)
+            Log.i(TAG, "Config JSON: $configJson")
 
-            // ۳. init env
-            try {
-                Libv2ray.initCoreEnv(datDir, configFile.absolutePath)
-                Log.i(TAG, "initCoreEnv OK")
-            } catch (e: Exception) {
-                Log.e(TAG, "initCoreEnv error", e)
-            }
+            // ۳. اجرای Xray
+            LibXray.runXrayFromJSON(datDir, "config.json", configJson)
 
-            // ۴. callback handler — interface, بدون پرانتز
-            val handler = object : CoreCallbackHandler {
-                override fun onEmitStatus(code: Long, message: String?): Long {
-                    Log.i(TAG, "onEmitStatus: $code - $message")
-                    return 0L
-                }
-
-                override fun startup(): Long {
-                    Log.i(TAG, "callback startup")
-                    return 0L
-                }
-
-                override fun shutdown(): Long {
-                    Log.i(TAG, "callback shutdown")
-                    return 0L
-                }
-            }
-
-            // ۵. ساخت controller
-            controller = Libv2ray.newCoreController(handler)
-            if (controller == null) {
-                eventSink?.error("CTRL_FAIL", "Cannot create CoreController", null)
-                return
-            }
-
-            // ۶. اجرای Xray — ⭐ امضا: startLoop(String configPath, Int tunFd)
-            val code = controller?.startLoop(configFile.absolutePath, tun!!.fd)
-            Log.i(TAG, "startLoop code=$code")
-
-            // ۷. تنظیم وضعیت
             isConnected = true
             showNotification()
             eventSink?.success(mapOf("event" to "connected"))
-            Log.i(TAG, "VPN started successfully")
+            Log.i(TAG, "Xray started")
 
         } catch (e: Exception) {
             Log.e(TAG, "startVpn error", e)
@@ -137,11 +96,10 @@ class ParsaVpnService : VpnService() {
     private fun stopVpn() {
         isConnected = false
         try {
-            controller?.stopLoop()
-            controller = null
-            Log.i(TAG, "stopLoop OK")
+            LibXray.stopXray()
+            Log.i(TAG, "stopXray OK")
         } catch (e: Exception) {
-            Log.e(TAG, "stopLoop error: ${e.message}")
+            Log.e(TAG, "stopXray error: ${e.message}")
         }
         try {
             tun?.close()
