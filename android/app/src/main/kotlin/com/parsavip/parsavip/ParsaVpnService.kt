@@ -93,7 +93,7 @@ class ParsaVpnService : VpnService() {
                 Log.e(TAG, "initCoreEnv error", e)
             }
 
-            // ۴. callback handler — امضا مطابق interface: (Long, String?) -> Long
+            // ۴. callback handler — interface, بدون پرانتز
             val handler = object : CoreCallbackHandler {
                 override fun onEmitStatus(code: Long, message: String?): Long {
                     Log.i(TAG, "onEmitStatus: $code - $message")
@@ -118,8 +118,8 @@ class ParsaVpnService : VpnService() {
                 return
             }
 
-            // ۶. اجرای Xray — startLoop(configPath, datDir)
-            val code = controller?.startLoop(configFile.absolutePath, datDir)
+            // ۶. اجرای Xray — ⭐ امضا: startLoop(String configPath, Int tunFd)
+            val code = controller?.startLoop(configFile.absolutePath, tun!!.fd)
             Log.i(TAG, "startLoop code=$code")
 
             // ۷. تنظیم وضعیت
