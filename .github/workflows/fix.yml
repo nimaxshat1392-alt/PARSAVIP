@@ -1,5 +1,4 @@
-
-name: Show Methods
+name: Show CoreMethods
 
 on: [push, workflow_dispatch]
 
@@ -38,13 +37,18 @@ jobs:
           cd classes
           unzip -o ../classes.jar
 
-      - name: Print methods
+      - name: Print CoreController methods
         run: |
           cd /tmp/aar_extract/classes
           echo "═══════════════════════════════"
-          echo "METHODS OF Libv2ray"
+          echo "METHODS OF CoreController"
           echo "═══════════════════════════════"
-          javap -p libv2ray/Libv2ray.class | grep -E "public|static"
+          javap -p libv2ray/CoreController.class
+          echo ""
+          echo "═══════════════════════════════"
+          echo "METHODS OF CoreCallbackHandler"
+          echo "═══════════════════════════════"
+          javap -p libv2ray/CoreCallbackHandler.class
           echo "═══════════════════════════════"
           echo "DONE"
           echo "═══════════════════════════════"
