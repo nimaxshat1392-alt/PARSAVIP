@@ -1,9 +1,10 @@
-name: Inspect AAR
+
+name: Show Methods
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,8 +14,7 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
@@ -23,35 +23,28 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Init gomobile
+      - name: Build AAR
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
-
-      - name: Clone and build AAR
-        run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
           git clone https://github.com/2dust/AndroidLibXrayLite.git /tmp/lib
           cd /tmp/lib
           go mod tidy
           gomobile bind -target=android/arm64 -androidapi=21 -o libv2ray.aar -v -ldflags="-checklinkname=0" .
-          ls -la libv2ray.aar
-
-      - name: Inspect AAR contents
-        run: |
           mkdir -p /tmp/aar_extract
           cd /tmp/aar_extract
           unzip -o /tmp/lib/libv2ray.aar
-          mkdir -p /tmp/aar_extract/classes
-          cd /tmp/aar_extract/classes
+          mkdir -p classes
+          cd classes
           unzip -o ../classes.jar
-          find . -name "*.class" | sort
 
-      - name: Inspect Libv2ray methods
+      - name: Print methods
         run: |
           cd /tmp/aar_extract/classes
-          echo "=== Libv2ray public methods ==="
-          javap -p libv2ray/Libv2ray.class
-          echo ""
-          echo "=== CoreController methods ==="
-          javap -p libv2ray/CoreController.class
+          echo "═══════════════════════════════"
+          echo "METHODS OF Libv2ray"
+          echo "═══════════════════════════════"
+          javap -p libv2ray/Libv2ray.class | grep -E "public|static"
+          echo "═══════════════════════════════"
+          echo "DONE"
+          echo "═══════════════════════════════"
