@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
-import libXray.LibXray
+import libv2ray.Libv2ray
 import org.json.JSONObject
 import org.json.JSONArray
 
@@ -73,13 +73,13 @@ class ParsaVpnService : VpnService() {
             }
 
             val datDir = filesDir.absolutePath
-            val configJson = LibXray.convertShareLinksToXrayJson(shareLink)
+            val configJson = Libv2ray.convertShareLinksToXrayJson(shareLink)
             Log.i(TAG, "Config JSON: $configJson")
 
             val fullConfig = injectTunInbound(configJson)
             Log.i(TAG, "Full config: $fullConfig")
 
-            LibXray.runXrayFromJSON(datDir, "config.json", fullConfig)
+            Libv2ray.runXrayFromJSON(datDir, "config.json", fullConfig)
 
             isConnected = true
             showNotification()
@@ -131,7 +131,7 @@ class ParsaVpnService : VpnService() {
     private fun stopVpn() {
         isConnected = false
         try {
-            LibXray.stopXray()
+            Libv2ray.stopXray()
         } catch (e: Exception) {
             Log.e(TAG, "stopXray error: ${e.message}")
         }
