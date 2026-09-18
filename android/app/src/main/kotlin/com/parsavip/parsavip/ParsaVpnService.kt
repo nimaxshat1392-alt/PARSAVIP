@@ -70,7 +70,7 @@ class ParsaVpnService : VpnService() {
                 return
             }
 
-            // ۲. ذخیره config در فایل
+            // ۲. ذخیره config
             val datDir = filesDir.absolutePath
             val configFile = File(filesDir, "config.json")
             FileOutputStream(configFile).use { it.write(jsonConfig.toByteArray()) }
@@ -78,23 +78,32 @@ class ParsaVpnService : VpnService() {
             // ۳. init env
             Libv2ray.initCoreEnv(datDir, configFile.absolutePath)
 
-            // ۴. ساخت callback handler
-            val handler = object : CoreCallbackHandler() {
-                override fun onEmitStatus(code: Long, message: String?): Boolean {
+            // ۴. callback handler (interface, بدون پرانتز)
+            val handler = object : CoreCallbackHandler {
+                override fun onEmitStatus(code: Long, message: String?): Long {
                     Log.i(TAG, "status: code=$code msg=$message")
-                    return true
+                    return 0L
                 }
-                override fun startup(): Boolean = true
-                override fun shutdown(): Boolean = true
+                override fun startup(): Long {
+                    Log.i(TAG, "callback startup")
+                    return 0L
+                }
+                override fun shutdown(): Long {
+                    Log.i(TAG, "callback shutdown")
+                    return 0L
+                }
             }
 
-            // ۵. ساخت و اجرای controller
+            // ۵. ساخت controller
             controller = Libv2ray.newCoreController(handler)
-            val code = controller?.startLoop(datDir, configFile.absolutePath)
 
+            // ۶. اجرای Xray — TUN fd + config path
+            val fd = tun!!.fd
+            val code = controller?.startLoop(fd, configFile.absolutePath)
             Log.i(TAG, "startLoop code=$code")
-            if (code == null || code < 0) {
-                eventSink?.error("START_FAIL", "startLoop failed: $code", null)
+
+            if (code == null || code < 0L) {
+                eventSink?.error("START_FAIL", "startLoop returned $code", null)
                 return
             }
 
