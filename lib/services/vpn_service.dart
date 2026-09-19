@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_singbox_client/flutter_singbox_client.dart' hide LogLevel;
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -31,7 +32,6 @@ class VpnService {
   bool get isBusy =>
       _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  /// مقداردهی اولیه هسته
   Future<void> initialize() async {
     if (_initialized) return;
     try {
@@ -39,20 +39,9 @@ class VpnService {
       _initialized = true;
       await _logs.add(LogLevel.info, 'Sing-box core initialized');
 
-      // طبق مستندات، حتماً به faultStream گوش بده
       _subs.add(_client.faultStream.listen((msg) {
         _lastError = msg;
         _logs.add(LogLevel.error, 'Core fault: $msg');
-      }));
-
-      // گوش دادن به وضعیت سرویس برای مدیریت UI
-      _subs.add(_client.serviceStateStream.listen((state) {
-        if (state.isRunning) {
-          _status = VpnStatus.connected;
-        } else if (state.isIdle) {
-          _status = VpnStatus.disconnected;
-        }
-        _statusCtrl.add(_status);
       }));
     } catch (e) {
       _lastError = e.toString();
@@ -60,7 +49,6 @@ class VpnService {
     }
   }
 
-  /// اتصال به VPN
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
 
@@ -72,28 +60,18 @@ class VpnService {
     try {
       if (!_initialized) await initialize();
 
-      // ۱. ساخت JSON کانفیگ با تزریق DNS و Routing
       final jsonConfig = _buildSingboxConfig(config);
 
-      // ۲. اعتبارسنجی کانفیگ (طبق مستندات، الزامی است)
       await _logs.add(LogLevel.info, 'Validating config...');
       await _client.checkConfig(jsonConfig);
       await _logs.add(LogLevel.info, 'Config is valid ✅');
 
-      // ۳. درخواست مجوز VPN
       final permitted = await _client.requestVPNPermission();
       if (!permitted) throw Exception('VPN permission denied');
 
-      // ۴. اتصال در حالت TUN
       await _client.connect(SessionOptions(
         config: jsonConfig,
         networkMode: NetworkMode.vpn,
-        notification: const NotificationConfig(
-          title: 'PARSAVIP',
-          showTrafficStats: true,
-          showStopButton: true,
-          stopButtonLabel: 'Disconnect',
-        ),
       ));
 
       _status = VpnStatus.connected;
@@ -110,67 +88,134 @@ class VpnService {
     }
   }
 
-  /// تبدیل URI به JSON استاندارد Sing-box
   String _buildSingboxConfig(VpnConfig config) {
-    // این بخش بر اساس مستندات Sing-box برای TUN ساخته شده است
-    // در اینجا یک کانفیگ نمونه برای VLESS با WebSocket و TLS قرار داده شده است
-    // شما می‌توانید این بخش را با پارسر خود جایگزین کنید
-    return '''
-    {
-      "log": {"level": "warn"},
-      "dns": {
-        "servers": [
-          {"tag": "cloudflare", "address": "1.1.1.1"},
-          {"tag": "google", "address": "8.8.8.8"}
-        ]
-      },
-      "inbounds": [
-        {
-          "type": "tun",
-          "tag": "tun-in",
-          "interface_name": "tun0",
-          "address": ["172.19.0.1/30"],
-          "auto_route": true,
-          "strict_route": true,
-          "stack": "system",
-          "sniff": true
-        }
-      ],
-      "outbounds": [
-        {
-          "type": "vless",
-          "tag": "proxy",
-          "server": "${config.host}",
-          "server_port": ${config.port},
-          "uuid": "${config.rawUri.split('@')[0].split('://')[1]}",
-          "tls": {
-            "enabled": true,
-            "server_name": "${Uri.parse(config.rawUri).queryParameters['sni'] ?? config.host}"
+    final u = Uri.parse(config.rawUri);
+    final q = u.queryParameters;
+
+    Map<String, dynamic> outbound;
+    if (config.protocol == VpnProtocol.vless) {
+      final security = q['security'] ?? 'none';
+      final sni = q['sni'] ?? '';
+      final flow = q['flow'] ?? '';
+
+      final result = <String, dynamic>{
+        'type': 'vless',
+        'tag': 'proxy',
+        'server': u.host,
+        'server_port': u.port == 0 ? 443 : u.port,
+        'uuid': u.userInfo,
+      };
+      if (flow.isNotEmpty) result['flow'] = flow;
+
+      if (security == 'tls') {
+        result['tls'] = {
+          'enabled': true,
+          'server_name': sni,
+        };
+      } else if (security == 'reality') {
+        result['tls'] = {
+          'enabled': true,
+          'server_name': sni,
+          'utls': {
+            'enabled': true,
+            'fingerprint': q['fp'] ?? 'chrome',
           },
-          "transport": {
-            "type": "ws",
-            "path": "${Uri.parse(config.rawUri).queryParameters['path'] ?? '/'}",
-            "headers": {
-              "Host": "${Uri.parse(config.rawUri).queryParameters['host'] ?? config.host}"
-            }
-          }
+          'reality': {
+            'enabled': true,
+            'public_key': q['pbk'] ?? '',
+            'short_id': q['sid'] ?? '',
+          },
+        };
+      }
+
+      final type = q['type'] ?? 'tcp';
+      if (type == 'ws') {
+        result['transport'] = {
+          'type': 'ws',
+          'path': q['path'] ?? '/',
+          'headers': {'Host': q['host'] ?? sni},
+        };
+      } else if (type == 'grpc') {
+        result['transport'] = {
+          'type': 'grpc',
+          'service_name': q['serviceName'] ?? '',
+        };
+      }
+      outbound = result;
+    } else if (config.protocol == VpnProtocol.trojan) {
+      outbound = {
+        'type': 'trojan',
+        'tag': 'proxy',
+        'server': u.host,
+        'server_port': u.port == 0 ? 443 : u.port,
+        'password': u.userInfo,
+        'tls': {
+          'enabled': true,
+          'server_name': q['sni'] ?? '',
         },
+      };
+    } else if (config.protocol == VpnProtocol.ss) {
+      final body = config.rawUri.substring(5).split('#').first;
+      String userInfo;
+      String hostPort;
+      if (body.contains('@')) {
+        final at = body.indexOf('@');
+        userInfo = body.substring(0, at);
+        if (!userInfo.contains(':')) {
+          userInfo = utf8.decode(base64.decode(
+              userInfo.replaceAll('-', '+').replaceAll('_', '/')));
+        }
+        hostPort = body.substring(at + 1);
+      } else {
+        final d = utf8.decode(base64.decode(
+            body.replaceAll('-', '+').replaceAll('_', '/')));
+        final at = d.lastIndexOf('@');
+        userInfo = d.substring(0, at);
+        hostPort = d.substring(at + 1);
+      }
+      final colon = userInfo.indexOf(':');
+      final method = userInfo.substring(0, colon);
+      final password = userInfo.substring(colon + 1);
+      final hp = hostPort.split(':');
+      outbound = {
+        'type': 'shadowsocks',
+        'tag': 'proxy',
+        'server': hp[0],
+        'server_port': int.tryParse(hp.length > 1 ? hp[1] : '443') ?? 443,
+        'method': method,
+        'password': password,
+      };
+    } else {
+      throw 'پروتکل پشتیبانی نمی‌شود';
+    }
+
+    final fullConfig = {
+      'log': {'level': 'warn'},
+      'inbounds': [
         {
-          "type": "direct",
-          "tag": "direct"
+          'type': 'tun',
+          'tag': 'tun-in',
+          'interface_name': 'tun0',
+          'address': ['172.19.0.1/30'],
+          'auto_route': true,
+          'strict_route': true,
+          'stack': 'system',
+          'sniff': true,
         }
       ],
-      "route": {
-        "rules": [
-          {
-            "ip_is_private": true,
-            "outbound": "direct"
-          }
+      'outbounds': [
+        outbound,
+        {'type': 'direct', 'tag': 'direct'},
+      ],
+      'route': {
+        'rules': [
+          {'ip_is_private': true, 'outbound': 'direct'},
         ],
-        "final": "proxy"
-      }
-    }
-    ''';
+        'final': 'proxy',
+      },
+    };
+
+    return jsonEncode(fullConfig);
   }
 
   Future<void> disconnect() async {
