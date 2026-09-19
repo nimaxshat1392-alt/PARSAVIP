@@ -49,7 +49,6 @@ class ParsaVpnService : VpnService() {
 
     private fun startVpn(shareLink: String) {
         try {
-            // ۱. ساخت TUN
             val builder = Builder()
             builder.setSession("PARSAVIP")
             builder.setMtu(1500)
@@ -57,13 +56,11 @@ class ParsaVpnService : VpnService() {
             builder.addRoute("0.0.0.0", 0)
             builder.addDnsServer("1.1.1.1")
             builder.addDnsServer("8.8.8.8")
-
             try {
                 builder.addDisallowedApplication(packageName)
             } catch (e: Exception) {
                 Log.w(TAG, "Cannot exclude self: ${e.message}")
             }
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 builder.setMetered(false)
             }
@@ -74,12 +71,10 @@ class ParsaVpnService : VpnService() {
                 return
             }
 
-            // ۲. تبدیل share link به JSON (با متد ساده libXray)
             val datDir = filesDir.absolutePath
             val configJson = LibXray.convertShareLinksToXrayJson(shareLink)
             Log.i(TAG, "Config JSON: $configJson")
 
-            // ۳. اجرای Xray
             LibXray.runXrayFromJSON(datDir, "config.json", configJson)
 
             isConnected = true
@@ -97,7 +92,6 @@ class ParsaVpnService : VpnService() {
         isConnected = false
         try {
             LibXray.stopXray()
-            Log.i(TAG, "stopXray OK")
         } catch (e: Exception) {
             Log.e(TAG, "stopXray error: ${e.message}")
         }
@@ -112,9 +106,7 @@ class ParsaVpnService : VpnService() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
-                CHANNEL_ID,
-                "VPN Status",
-                NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "VPN Status", NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
@@ -122,16 +114,14 @@ class ParsaVpnService : VpnService() {
 
     private fun showNotification() {
         val pi = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
         val stopIntent = Intent(this, ParsaVpnService::class.java).apply {
             action = ACTION_STOP
         }
         val stopPi = PendingIntent.getService(
-            this, 1, stopIntent,
-            PendingIntent.FLAG_IMMUTABLE
+            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
