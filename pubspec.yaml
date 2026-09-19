@@ -1,5 +1,5 @@
 name: parsavip
-description: PARSAVIP VPN
+description: PARSAVIP VPN - Native Xray Integration
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -14,7 +14,6 @@ dependencies:
   google_fonts: ^6.2.1
   http: ^1.1.0
   crypto: ^3.0.3
-  flutter_vless: ^1.0.10
 
 dev_dependencies:
   flutter_test:
