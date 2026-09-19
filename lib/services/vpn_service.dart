@@ -61,6 +61,7 @@ class VpnService {
       if (!_initialized) await initialize();
 
       final jsonConfig = _buildSingboxConfig(config);
+      await _logs.add(LogLevel.info, 'Config JSON: $jsonConfig');
 
       await _logs.add(LogLevel.info, 'Validating config...');
       await _client.checkConfig(jsonConfig);
@@ -88,11 +89,21 @@ class VpnService {
     }
   }
 
+  /// ⭐ رفع مشکل Base64 بدون padding
+  String _b64Decode(String input) {
+    var s = input.replaceAll('-', '+').replaceAll('_', '/');
+    while (s.length % 4 != 0) {
+      s += '=';
+    }
+    return utf8.decode(base64.decode(s));
+  }
+
   String _buildSingboxConfig(VpnConfig config) {
     final u = Uri.parse(config.rawUri);
     final q = u.queryParameters;
 
     Map<String, dynamic> outbound;
+
     if (config.protocol == VpnProtocol.vless) {
       final security = q['security'] ?? 'none';
       final sni = q['sni'] ?? '';
@@ -143,7 +154,10 @@ class VpnService {
       }
       outbound = result;
     } else if (config.protocol == VpnProtocol.trojan) {
-      outbound = {
+      final sni = q['sni'] ?? '';
+      final host = q['host'] ?? sni;
+      final path = q['path'] ?? '/';
+      final result = <String, dynamic>{
         'type': 'trojan',
         'tag': 'proxy',
         'server': u.host,
@@ -151,32 +165,80 @@ class VpnService {
         'password': u.userInfo,
         'tls': {
           'enabled': true,
-          'server_name': q['sni'] ?? '',
+          'server_name': sni,
         },
       };
+      if (q['type'] == 'ws') {
+        result['transport'] = {
+          'type': 'ws',
+          'path': path,
+          'headers': {'Host': host},
+        };
+      }
+      outbound = result;
+    } else if (config.protocol == VpnProtocol.vmess) {
+      final raw = config.rawUri.substring(8).split('#').first;
+      final j = jsonDecode(_b64Decode(raw)) as Map<String, dynamic>;
+      final host = (j['host'] ?? '').toString();
+      final sni = (j['sni'] ?? '').toString();
+      final tls = (j['tls'] ?? '').toString();
+      final net = (j['net'] ?? 'tcp').toString();
+      final path = (j['path'] ?? '/').toString();
+
+      final result = <String, dynamic>{
+        'type': 'vmess',
+        'tag': 'proxy',
+        'server': j['add'],
+        'server_port': int.tryParse((j['port'] ?? '443').toString()) ?? 443,
+        'uuid': j['id'],
+        'security': j['scy'] ?? 'auto',
+        'alter_id': int.tryParse((j['aid'] ?? '0').toString()) ?? 0,
+      };
+
+      if (tls == 'tls') {
+        result['tls'] = {
+          'enabled': true,
+          'server_name': sni.isNotEmpty ? sni : host,
+        };
+      }
+
+      if (net == 'ws') {
+        result['transport'] = {
+          'type': 'ws',
+          'path': path,
+          'headers': {'Host': host},
+        };
+      } else if (net == 'grpc') {
+        result['transport'] = {
+          'type': 'grpc',
+          'service_name': path,
+        };
+      }
+      outbound = result;
     } else if (config.protocol == VpnProtocol.ss) {
       final body = config.rawUri.substring(5).split('#').first;
       String userInfo;
       String hostPort;
+
       if (body.contains('@')) {
         final at = body.indexOf('@');
         userInfo = body.substring(0, at);
         if (!userInfo.contains(':')) {
-          userInfo = utf8.decode(base64.decode(
-              userInfo.replaceAll('-', '+').replaceAll('_', '/')));
+          userInfo = _b64Decode(userInfo);
         }
         hostPort = body.substring(at + 1);
       } else {
-        final d = utf8.decode(base64.decode(
-            body.replaceAll('-', '+').replaceAll('_', '/')));
+        final d = _b64Decode(body);
         final at = d.lastIndexOf('@');
         userInfo = d.substring(0, at);
         hostPort = d.substring(at + 1);
       }
+
       final colon = userInfo.indexOf(':');
       final method = userInfo.substring(0, colon);
       final password = userInfo.substring(colon + 1);
       final hp = hostPort.split(':');
+
       outbound = {
         'type': 'shadowsocks',
         'tag': 'proxy',
