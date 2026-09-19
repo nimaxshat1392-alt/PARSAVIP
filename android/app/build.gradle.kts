@@ -33,6 +33,7 @@ android {
         buildConfigField("String", "APPLICATION_ID", "\"com.parsavip.parsavip\"")
         buildConfigField("String", "VERSION_NAME", "\"1.0.0\"")
         buildConfigField("int", "VERSION_CODE", "1")
+        buildConfigField("String", "PREFERENCE_NAME", "\"com.parsavip.parsavip_preferences\"")
     }
 
     buildTypes {
