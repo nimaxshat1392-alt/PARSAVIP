@@ -22,16 +22,15 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Aggressive cleanup - keep only VPN core
+      - name: Cleanup unnecessary files
         run: |
           cd android/app/src/main/java/com/v2ray/ang
           
-          # پوشه‌هایی که کاملاً برای UI و غیرVPN هستن
+          # حذف فقط UI و چیزهای غیر VPN
           rm -rf ui receiver root fmt contracts helper || true
           
-          # فایل‌های util که به کتابخانه‌های خارجی وابسته‌ن
+          # حذف فایل‌های util که به کتابخانه‌های خارجی سنگین وابسته‌ن
           rm -f util/AppIconFetcher.kt || true
-          rm -f util/HttpUtil.kt || true
           rm -f util/QRCodeDecoder.kt || true
           rm -f util/QRCodeEncoder.kt || true
           rm -f util/Utils.kt || true
@@ -40,19 +39,37 @@ jobs:
           rm -f util/DeepLinks.kt || true
           rm -f util/ShortcutManager.kt || true
           
-          # فایل‌های application level که به UI وابسته‌ن
+          # حذف فایل AngApplication (نیاز به UI داره)
           rm -f AngApplication.kt || true
-          rm -f AppConfig.kt || true
-          
-          # فایل‌های extension که ممکنه به utils حذف‌شده وابسته باشن
-          ls extension/ 2>/dev/null || true
           
           echo "=== Remaining .kt files ==="
           find . -name "*.kt" | sort
-          
-          echo ""
-          echo "=== Total count ==="
-          find . -name "*.kt" | wc -l
+
+      - name: Create minimal AppConfig.kt
+        run: |
+          cat > android/app/src/main/java/com/v2ray/ang/AppConfig.kt << 'EOF'
+          package com.v2ray.ang
+
+          import com.parsavip.parsavip.BuildConfig
+
+          object AppConfig {
+              const val ANGPACKAGENAME = "com.parsavip.parsavip"
+              const val VERSION_NAME = "1.0.0"
+              const val VERSION_CODE = 1
+
+              @Volatile
+              var isRunning = false
+
+              @Volatile
+              var isTestRunning = false
+
+              @Volatile
+              var selectedProfile = -1
+
+              const val PREF_INAPP_BUY_IS_PREMIUM = "pref_inapp_buy_is_premium"
+              const val PREFERENCE_NAME = "com.parsavip.parsavip_preferences"
+          }
+          EOF
 
       - name: Patch build.gradle.kts
         run: |
@@ -92,6 +109,7 @@ jobs:
                   buildConfigField("String", "APPLICATION_ID", "\"com.parsavip.parsavip\"")
                   buildConfigField("String", "VERSION_NAME", "\"1.0.0\"")
                   buildConfigField("int", "VERSION_CODE", "1")
+                  buildConfigField("String", "PREFERENCE_NAME", "\"com.parsavip.parsavip_preferences\"")
               }
 
               buildTypes {
@@ -150,7 +168,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Aggressive cleanup + all deps" || echo "Nothing"
+          git commit -m "Add minimal AppConfig + cleanup" || echo "Nothing"
           git push || echo "Nothing"
 
       - name: Get dependencies
