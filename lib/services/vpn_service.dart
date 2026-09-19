@@ -250,24 +250,33 @@ class VpnService {
       throw 'پروتکل پشتیبانی نمی‌شود';
     }
 
-    // ⭐ نسخه جدید: sniff منتقل شده به route.rules (Sing-box 1.13+)
+    // ⭐ نسخه نهایی: DNS + auto_detect + strict_route=false
     final fullConfig = {
-      'log': {'level': 'warn'},
+      'log': {'level': 'info'},
+      'dns': {
+        'servers': [
+          {'tag': 'google', 'address': '8.8.8.8'},
+          {'tag': 'cf', 'address': '1.1.1.1'},
+          {'tag': 'local', 'address': 'local', 'detour': 'direct'},
+        ]
+      },
       'inbounds': [
         {
           'type': 'tun',
           'tag': 'tun-in',
           'address': ['172.19.0.1/30'],
           'auto_route': true,
-          'strict_route': true,
+          'strict_route': false,
           'stack': 'system',
         }
       ],
       'outbounds': [
         outbound,
         {'type': 'direct', 'tag': 'direct'},
+        {'type': 'dns', 'tag': 'dns-out'},
       ],
       'route': {
+        'auto_detect_interface': true,
         'rules': [
           {'action': 'sniff'},
           {'protocol': 'dns', 'action': 'hijack-dns'},
