@@ -1,21 +1,64 @@
-name: Build PARSAVIP
+name: Build PARSAVIP with Native v2rayNG
 
 on: [push, workflow_dispatch]
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - run: flutter pub get
-      - run: flutter build apk --release
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Build Xray AAR from source
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init
+          git clone https://github.com/2dust/AndroidLibXrayLite.git /tmp/libXray
+          cd /tmp/libXray
+          go mod tidy
+          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libXray.aar -v -ldflags="-checklinkname=0" .
+          ls -la libXray.aar
+          mkdir -p $GITHUB_WORKSPACE/android/app/libs
+          cp libXray.aar $GITHUB_WORKSPACE/android/app/libs/
+
+      - name: Download v2rayNG source
+        run: |
+          git clone --depth 1 https://github.com/2dust/v2rayNG.git /tmp/v2rayNG
+          # کپی کردن کدهای Kotlin مورد نیاز به پروژه
+          mkdir -p $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang
+          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/service \
+                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
+          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/dto \
+                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
+          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/core \
+                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
+          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/handler \
+                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
       - uses: actions/upload-artifact@v4
         with:
           name: apk
