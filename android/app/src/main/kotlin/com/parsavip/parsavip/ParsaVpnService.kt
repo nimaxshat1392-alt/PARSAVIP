@@ -10,7 +10,9 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
-import libXray.LibXray
+import libv2ray.Libv2ray
+import libv2ray.V2rayCallback
+import libv2ray.V2rayPoint
 import java.io.File
 
 class ParsaVpnService : VpnService() {
@@ -27,6 +29,8 @@ class ParsaVpnService : VpnService() {
     }
 
     private var tun: ParcelFileDescriptor? = null
+    private var v2rayPoint: V2rayPoint? = null
+    private var runningThread: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -36,8 +40,8 @@ class ParsaVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val link = intent.getStringExtra("config") ?: ""
-                startVpn(link)
+                val config = intent.getStringExtra("config") ?: ""
+                startVpn(config)
             }
             ACTION_STOP -> {
                 stopVpn()
@@ -49,6 +53,12 @@ class ParsaVpnService : VpnService() {
 
     private fun startVpn(shareLink: String) {
         try {
+            // ۱. تبدیل share link به config JSON
+            val datDir = filesDir.absolutePath
+            val configJson = Libv2ray.convertShareLinksToXrayJson(shareLink)
+            Log.i(TAG, "Config: $configJson")
+
+            // ۲. ساخت TUN
             val builder = Builder()
             builder.setSession("PARSAVIP")
             builder.setMtu(1500)
@@ -56,11 +66,13 @@ class ParsaVpnService : VpnService() {
             builder.addRoute("0.0.0.0", 0)
             builder.addDnsServer("1.1.1.1")
             builder.addDnsServer("8.8.8.8")
+
             try {
                 builder.addDisallowedApplication(packageName)
             } catch (e: Exception) {
                 Log.w(TAG, "Cannot exclude self: ${e.message}")
             }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 builder.setMetered(false)
             }
@@ -71,34 +83,73 @@ class ParsaVpnService : VpnService() {
                 return
             }
 
-            val datDir = filesDir.absolutePath
-            val configJson = LibXray.convertShareLinksToXrayJson(shareLink)
-            Log.i(TAG, "Config JSON: $configJson")
+            // ۳. callback: مهم‌ترین بخش — protect socket از VPN
+            val callback = object : V2rayCallback {
+                override fun OnEmitStatus(status: Long, msg: String?) {
+                    Log.i(TAG, "V2Ray status=$status msg=$msg")
+                }
 
-            LibXray.runXrayFromJSON(datDir, "config.json", configJson)
+                override fun ProtectFd(fd: Long): Boolean {
+                    val ok = protect(fd.toInt())
+                    Log.i(TAG, "protect fd=$fd ok=$ok")
+                    return ok
+                }
+            }
+
+            // ۴. ساخت V2rayPoint
+            v2rayPoint = Libv2ray.newV2rayPoint(callback, configJson)
+            if (v2rayPoint == null) {
+                eventSink?.error("POINT_FAIL", "Cannot create V2rayPoint", null)
+                return
+            }
+
+            // ۵. تنظیم VpnService
+            v2rayPoint!!.setDomain("")
+            v2rayPoint!!.setIsVpnMode(true)
+            v2rayPoint!!.setVpnService(this)
+            v2rayPoint!!.setTunFd(tun!!.fd)
+
+            // ۶. اجرای Xray در thread جدا
+            runningThread = Thread {
+                try {
+                    v2rayPoint!!.runLoop(true)
+                    Log.i(TAG, "Xray runLoop started")
+                } catch (e: Exception) {
+                    Log.e(TAG, "runLoop error", e)
+                }
+            }.also { it.start() }
+
+            // ۷. صبر کن تا Xray راه بیاد
+            Thread.sleep(1500)
 
             isConnected = true
             showNotification()
             eventSink?.success(mapOf("event" to "connected"))
-            Log.i(TAG, "Xray started")
+            Log.i(TAG, "✅ VPN started")
 
         } catch (e: Exception) {
             Log.e(TAG, "startVpn error", e)
-            eventSink?.error("START_FAIL", e.message ?: "Unknown error", null)
+            eventSink?.error("START_FAIL", e.message ?: "Unknown", null)
         }
     }
 
     private fun stopVpn() {
         isConnected = false
         try {
-            LibXray.stopXray()
+            v2rayPoint?.stopLoop()
+            Log.i(TAG, "stopLoop OK")
         } catch (e: Exception) {
-            Log.e(TAG, "stopXray error: ${e.message}")
+            Log.e(TAG, "stopLoop error: ${e.message}")
         }
+        try {
+            runningThread?.interrupt()
+            runningThread = null
+        } catch (_: Exception) {}
         try {
             tun?.close()
             tun = null
         } catch (_: Exception) {}
+        v2rayPoint = null
         cancelNotification()
         eventSink?.success(mapOf("event" to "disconnected"))
     }
@@ -106,7 +157,9 @@ class ParsaVpnService : VpnService() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
-                CHANNEL_ID, "VPN Status", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID,
+                "VPN Status",
+                NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
@@ -114,14 +167,16 @@ class ParsaVpnService : VpnService() {
 
     private fun showNotification() {
         val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, 0,
+            Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
         val stopIntent = Intent(this, ParsaVpnService::class.java).apply {
             action = ACTION_STOP
         }
         val stopPi = PendingIntent.getService(
-            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE
+            this, 1, stopIntent,
+            PendingIntent.FLAG_IMMUTABLE
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -131,7 +186,7 @@ class ParsaVpnService : VpnService() {
 
         val notif = builder
             .setContentTitle("PARSAVIP")
-            .setContentText("متصل به VPN")
+            .setContentText("متصل")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pi)
             .addAction(0, "قطع", stopPi)
