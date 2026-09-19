@@ -22,28 +22,6 @@ jobs:
         with:
           channel: 'stable'
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Build libv2ray AAR from v2rayNG source
-        run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          gomobile init
-          git clone --depth 1 https://github.com/2dust/AndroidLibV2rayLite.git /tmp/libv2ray
-          cd /tmp/libv2ray
-          go mod tidy
-          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libv2ray.aar -v -ldflags="-checklinkname=0" .
-          ls -la libv2ray.aar
-          mkdir -p $GITHUB_WORKSPACE/android/app/libs
-          cp libv2ray.aar $GITHUB_WORKSPACE/android/app/libs/
-          ls -la $GITHUB_WORKSPACE/android/app/libs/
-
       - name: Get dependencies
         run: flutter pub get
 
