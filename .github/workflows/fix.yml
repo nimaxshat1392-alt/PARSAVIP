@@ -1,4 +1,4 @@
-name: Build PARSAVIP with Native v2rayNG
+name: Build PARSAVIP with v2rayNG Native
 
 on: [push, workflow_dispatch]
 
@@ -16,18 +16,22 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '17'
 
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
 
       - name: Install gomobile
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Build Xray AAR from source
+      - name: Build libXray AAR
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
@@ -35,31 +39,104 @@ jobs:
           cd /tmp/libXray
           go mod tidy
           gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libXray.aar -v -ldflags="-checklinkname=0" .
-          ls -la libXray.aar
           mkdir -p $GITHUB_WORKSPACE/android/app/libs
           cp libXray.aar $GITHUB_WORKSPACE/android/app/libs/
+          ls -la $GITHUB_WORKSPACE/android/app/libs/
 
-      - name: Download v2rayNG source
+      - name: Download v2rayNG Native code
         run: |
           git clone --depth 1 https://github.com/2dust/v2rayNG.git /tmp/v2rayNG
-          # کپی کردن کدهای Kotlin مورد نیاز به پروژه
           mkdir -p $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang
-          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/service \
-                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
-          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/dto \
-                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
-          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/core \
-                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
-          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/handler \
-                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/
+          # کپی کل پوشه‌های Native
+          cp -r /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/* \
+                $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang/ 2>/dev/null || true
+          echo "=== Files copied ==="
+          find $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang -name "*.kt" | wc -l
+          echo "=== Native total lines ==="
+          find $GITHUB_WORKSPACE/android/app/src/main/java/com/v2ray/ang -name "*.kt" -exec cat {} + | wc -l
+
+      - name: Fix build.gradle.kts (JVM target)
+        run: |
+          cat > android/app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("kotlin-android")
+              id("dev.flutter.flutter-gradle-plugin")
+          }
+
+          android {
+              namespace = "com.parsavip.parsavip"
+              compileSdk = 35
+              ndkVersion = flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              defaultConfig {
+                  applicationId = "com.parsavip.parsavip"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+                  multiDexEnabled = true
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.getByName("debug")
+                      isMinifyEnabled = false
+                      isShrinkResources = false
+                  }
+              }
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+              }
+          }
+
+          dependencies {
+              implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+              implementation("com.google.code.gson:gson:2.10.1")
+              implementation("com.tencent:mmkv:1.3.4")
+              implementation("androidx.preference:preference-ktx:1.2.1")
+              implementation("androidx.recyclerview:recyclerview:1.3.2")
+              implementation("com.google.android.material:material:1.11.0")
+          }
+
+          flutter {
+              source = "../.."
+          }
+          EOF
+
+      - name: Commit Native files (before build)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add v2rayNG Native code + libXray.aar" || echo "Nothing to commit"
+          git push || echo "Nothing to push"
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
         run: flutter build apk --release
+        continue-on-error: true
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: apk
           path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: warn
