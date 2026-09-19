@@ -8,6 +8,8 @@ enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
 
 class VpnService {
   final LogService _logs = LogService();
+  final VlessController _vless = VlessController();
+
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
@@ -31,7 +33,7 @@ class VpnService {
   Future<void> initialize() async {
     if (_initialized) return;
     try {
-      await FlutterVless.initializeVless(
+      await _vless.initializeVless(
         notificationIconResourceType: "mipmap",
         notificationIconResourceName: "ic_launcher",
       );
@@ -57,14 +59,17 @@ class VpnService {
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
       await _logs.add(LogLevel.info, 'URI: ${config.rawUri}');
 
-      // ⭐ Xray-core: URI مستقیم می‌ره — بدون JSON config!
-      final started = await FlutterVless.startVless(
-        remark: config.name,
-        url: config.rawUri,
-        proxyOnly: false,
-      );
+      // ⭐ پارس URI به JSON config
+      final parsedConfig = await VlessParser.parseFromURL(config.rawUri);
+      final jsonConfig = await parsedConfig.getFullConfiguration();
 
-      if (!started) throw Exception('Xray core start failed');
+      final permitted = await _vless.requestPermission();
+      if (!permitted) throw Exception('VPN permission denied');
+
+      await _vless.startVless(
+        remark: config.name,
+        config: jsonConfig,
+      );
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
@@ -85,7 +90,7 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await FlutterVless.stopVless();
+      await _vless.stopVless();
     } catch (_) {}
     _status = VpnStatus.disconnected;
     _current = null;
@@ -120,3 +125,4 @@ class VpnService {
     _statusCtrl.close();
     _durationCtrl.close();
   }
+}
