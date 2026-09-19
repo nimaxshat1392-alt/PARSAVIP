@@ -1,4 +1,4 @@
-name: Build PARSAVIP
+name: Build PARSAVIP with v2rayNG Native
 
 on: [push, workflow_dispatch]
 
@@ -22,27 +22,28 @@ jobs:
         with:
           channel: 'stable'
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install gomobile
+      - name: Clone v2rayNG source
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          git clone --depth 1 https://github.com/2dust/v2rayNG.git /tmp/v2rayNG
 
-      - name: Build libXray AAR
+      - name: Find libv2ray.aar in v2rayNG
         run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
-          gomobile init
-          git clone https://github.com/XTLS/libXray.git /tmp/libXray
-          cd /tmp/libXray
-          go mod tidy
-          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libXray.aar -v -ldflags="-checklinkname=0" .
-          ls -la libXray.aar
-          mkdir -p $GITHUB_WORKSPACE/android/app/libs
-          cp libXray.aar $GITHUB_WORKSPACE/android/app/libs/
-          ls -la $GITHUB_WORKSPACE/android/app/libs/
+          find /tmp/v2rayNG -name "*.aar" -o -name "*.jar" | head -20
+          echo "=== libs folder ==="
+          ls -la /tmp/v2rayNG/V2rayNG/app/libs/ 2>/dev/null || true
+          echo "=== Service folder ==="
+          ls -la /tmp/v2rayNG/V2rayNG/app/src/main/java/com/v2ray/ang/service/ 2>/dev/null || true
+
+      - name: Download libv2ray.aar from v2rayNG releases
+        run: |
+          mkdir -p android/app/libs
+          cd android/app/libs
+          # از release های AndroidLibV2rayLite استفاده می‌کنیم
+          curl -L -f -o libv2ray.aar \
+            "https://github.com/2dust/AndroidLibV2rayLite/releases/latest/download/libv2ray.aar" || \
+          curl -L -f -o libv2ray.aar \
+            "https://github.com/2dust/AndroidLibXrayLite/releases/latest/download/libXray.aar" || true
+          ls -la
 
       - name: Get dependencies
         run: flutter pub get
