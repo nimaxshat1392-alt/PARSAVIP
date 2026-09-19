@@ -31,17 +31,17 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-      - name: Build libXray AAR (from XTLS)
+      - name: Build libv2ray AAR from v2rayNG source
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
-          git clone https://github.com/XTLS/libXray.git /tmp/libXray
-          cd /tmp/libXray
+          git clone --depth 1 https://github.com/2dust/AndroidLibV2rayLite.git /tmp/libv2ray
+          cd /tmp/libv2ray
           go mod tidy
-          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libXray.aar -v -ldflags="-checklinkname=0" .
-          ls -la libXray.aar
+          gomobile bind -target=android/arm64,android/arm -androidapi=21 -o libv2ray.aar -v -ldflags="-checklinkname=0" .
+          ls -la libv2ray.aar
           mkdir -p $GITHUB_WORKSPACE/android/app/libs
-          cp libXray.aar $GITHUB_WORKSPACE/android/app/libs/
+          cp libv2ray.aar $GITHUB_WORKSPACE/android/app/libs/
           ls -la $GITHUB_WORKSPACE/android/app/libs/
 
       - name: Get dependencies
