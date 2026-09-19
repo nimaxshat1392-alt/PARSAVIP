@@ -89,7 +89,6 @@ class VpnService {
     }
   }
 
-  /// ⭐ رفع مشکل Base64 بدون padding
   String _b64Decode(String input) {
     var s = input.replaceAll('-', '+').replaceAll('_', '/');
     while (s.length % 4 != 0) {
@@ -251,18 +250,17 @@ class VpnService {
       throw 'پروتکل پشتیبانی نمی‌شود';
     }
 
+    // ⭐ نسخه جدید: sniff منتقل شده به route.rules (Sing-box 1.13+)
     final fullConfig = {
       'log': {'level': 'warn'},
       'inbounds': [
         {
           'type': 'tun',
           'tag': 'tun-in',
-          'interface_name': 'tun0',
           'address': ['172.19.0.1/30'],
           'auto_route': true,
           'strict_route': true,
           'stack': 'system',
-          'sniff': true,
         }
       ],
       'outbounds': [
@@ -271,6 +269,8 @@ class VpnService {
       ],
       'route': {
         'rules': [
+          {'action': 'sniff'},
+          {'protocol': 'dns', 'action': 'hijack-dns'},
           {'ip_is_private': true, 'outbound': 'direct'},
         ],
         'final': 'proxy',
