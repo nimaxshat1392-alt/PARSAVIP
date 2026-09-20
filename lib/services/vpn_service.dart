@@ -1,164 +1,183 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
-import 'xray_config_builder.dart';
 import '../models/log_entry.dart';
 
-enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
+/// پینگ واقعی از طریق Xray — دقیقاً مثل v2rayNG
+class PingService {
+  PingService._();
 
-class VpnService {
-  final LogService _logs = LogService();
-  late final FlutterVless _vless;
-  VpnStatus _status = VpnStatus.disconnected;
-  VpnConfig? _current;
-  String? _lastError;
-  bool _initialized = false;
-  bool _manualDisconnect = false;
+  static const int offlineThreshold = 9999;
+  static const String testUrl = 'https://www.google.com/generate_204';
 
-  final _statusCtrl = StreamController<VpnStatus>.broadcast();
-  final _durationCtrl = StreamController<Duration>.broadcast();
-  Timer? _timer;
-  Duration _duration = Duration.zero;
+  static FlutterVless? _vless;
+  static bool _initialized = false;
+  static bool _cancelled = false;
+  static final LogService _logs = LogService();
 
-  VpnStatus get status => _status;
-  VpnConfig? get current => _current;
-  String? get lastError => _lastError;
-  Stream<VpnStatus> get statusStream => _statusCtrl.stream;
-  Stream<Duration> get durationStream => _durationCtrl.stream;
-  Duration get duration => _duration;
-  bool get isConnected => _status == VpnStatus.connected;
-  bool get isBusy =>
-      _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
-
-  VpnService() {
-    _vless = FlutterVless(
-      onStatusChanged: (status) {
-        final conn = status.connectionState.name.toLowerCase();
-        _logs.add(LogLevel.info, 'state=${status.state} conn=$conn');
-
-        if (conn.contains('connected') && !conn.contains('disconnected')) {
-          if (_status != VpnStatus.connected) {
-            _status = VpnStatus.connected;
-            _statusCtrl.add(_status);
-            if (_timer == null) _startTimer();
-          }
-        } else if (conn.contains('disconnected')) {
-          if (!_manualDisconnect && _status == VpnStatus.connected) {
-            _lastError = 'اتصال قطع شد';
-            _status = VpnStatus.error;
-            _statusCtrl.add(_status);
-            _stopTimer();
-          } else if (_status != VpnStatus.disconnecting) {
-            _status = VpnStatus.disconnected;
-            _statusCtrl.add(_status);
-            _stopTimer();
-          }
-        }
-      },
-    );
+  static Future<void> initialize() async {
+    if (_initialized) return;
+    _vless ??= FlutterVless(onStatusChanged: (_) {});
+    try {
+      await _vless!.initializeVless();
+      _initialized = true;
+    } catch (_) {}
   }
 
-  Future<void> initialize() async {
-    if (_initialized) return;
+  static void cancel() => _cancelled = true;
+  static void reset() => _cancelled = false;
+
+  /// sanitize URI قبل از parse
+  static String _sanitizeUri(String uri) {
     try {
-      await _vless.initializeVless(
-        notificationIconResourceType: 'mipmap',
-        notificationIconResourceName: 'ic_launcher',
-        providerBundleIdentifier: 'com.parsavip.parsavip',
-        groupIdentifier: 'group.com.parsavip.parsavip',
-      );
-      _initialized = true;
-      await _logs.add(LogLevel.info, 'Xray core initialized');
-    } catch (e) {
-      _lastError = e.toString();
-      await _logs.add(LogLevel.error, 'Init failed: $e');
+      final hashIndex = uri.indexOf('#');
+      String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
+      String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
+
+      final qIndex = mainPart.indexOf('?');
+      if (qIndex < 0) return uri;
+
+      String basePart = mainPart.substring(0, qIndex);
+      String queryPart = mainPart.substring(qIndex + 1);
+
+      final newParams = <String>[];
+      for (final pair in queryPart.split('&')) {
+        if (pair.isEmpty) continue;
+        final eqIndex = pair.indexOf('=');
+        if (eqIndex < 0) {
+          newParams.add(pair);
+          continue;
+        }
+        final key = pair.substring(0, eqIndex);
+        final value = pair.substring(eqIndex + 1);
+
+        if (key == 'security' && (value.isEmpty || value == 'none')) {
+          continue;
+        }
+        if (value.isEmpty) continue;
+        newParams.add(pair);
+      }
+
+      return '$basePart?${newParams.join('&')}$fragment';
+    } catch (_) {
+      return uri;
     }
   }
 
-  Future<bool> connect(VpnConfig config) async {
-    if (isBusy || isConnected) return false;
-
-    _manualDisconnect = false;
-    _status = VpnStatus.connecting;
-    _statusCtrl.add(_status);
-    _current = config;
-    _lastError = null;
-
+  static Future<int?> _xrayPing(VpnConfig c) async {
     try {
       if (!_initialized) await initialize();
+      if (_vless == null) return null;
 
-      await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
+      final cleanUri = _sanitizeUri(c.rawUri);
+      final FlutterVlessURL parsed = FlutterVless.parseFromURL(cleanUri);
+      final String jsonConfig = parsed.getFullConfiguration();
 
-      // ⭐ ساخت JSON دستی — بدون parseFromURL
-      final String jsonConfig = XrayConfigBuilder.build(config);
-      await _logs.add(LogLevel.info, 'Built JSON config OK');
+      final int delay = await _vless!
+          .getServerDelay(config: jsonConfig, url: testUrl)
+          .timeout(const Duration(seconds: 10), onTimeout: () => -1);
 
-      final bool permitted = await _vless.requestPermission();
-      if (!permitted) throw Exception('VPN permission denied');
-      await _logs.add(LogLevel.info, 'VPN permission granted');
-
-      await _vless.startVless(
-        remark: config.name,
-        config: jsonConfig,
-        proxyOnly: false,
-      );
-
-      _status = VpnStatus.connected;
-      _statusCtrl.add(_status);
-      _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected');
-      return true;
-    } catch (e) {
-      _lastError = e.toString().replaceFirst('Exception: ', '');
-      _status = VpnStatus.error;
-      _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, '❌ $e');
-      return false;
+      if (delay < 0 || delay >= offlineThreshold || delay > 10000) return null;
+      return delay;
+    } catch (_) {
+      return null;
     }
   }
 
-  Future<void> disconnect() async {
-    if (_status == VpnStatus.disconnected) return;
-    _manualDisconnect = true;
-    _status = VpnStatus.disconnecting;
-    _statusCtrl.add(_status);
+  static Future<int?> _tcpPing(VpnConfig c) async {
+    if (c.host.isEmpty || c.port <= 0) return null;
+    final sw = Stopwatch()..start();
     try {
-      await _vless.stopVless();
-    } catch (_) {}
-    _status = VpnStatus.disconnected;
-    _current = null;
-    _stopTimer();
-    _statusCtrl.add(_status);
-  }
-
-  Future<void> toggle(VpnConfig config) async {
-    if (isConnected || _status == VpnStatus.error) {
-      await disconnect();
-    } else {
-      await connect(config);
+      final socket = await Socket.connect(
+        c.host,
+        c.port,
+        timeout: const Duration(seconds: 3),
+      );
+      socket.destroy();
+      sw.stop();
+      return sw.elapsedMilliseconds;
+    } catch (_) {
+      return null;
     }
   }
 
-  void _startTimer() {
-    _duration = Duration.zero;
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _duration += const Duration(seconds: 1);
-      _durationCtrl.add(_duration);
-    });
+  static Future<int?> pingOne(VpnConfig c) async {
+    if (_cancelled) return null;
+    final xray = await _xrayPing(c);
+    if (xray != null) return xray;
+    if (_cancelled) return null;
+    return await _tcpPing(c);
   }
 
-  void _stopTimer() {
-    _timer?.cancel();
-    _timer = null;
-    _duration = Duration.zero;
-    _durationCtrl.add(_duration);
+  static Future<List<VpnConfig>> pingAll(
+    List<VpnConfig> configs, {
+    int concurrency = 2,
+    void Function(int done, int total)? onProgress,
+  }) async {
+    if (configs.isEmpty) return [];
+    reset();
+    await initialize();
+
+    final results = <VpnConfig>[];
+    final total = configs.length;
+    int idx = 0;
+    int done = 0;
+
+    Future<void> worker() async {
+      while (true) {
+        if (_cancelled) return;
+        final i = idx++;
+        if (i >= total) return;
+        final c = configs[i];
+        final ms = await pingOne(c);
+        results.add(VpnConfig(
+          id: c.id,
+          name: c.name,
+          protocol: c.protocol,
+          rawUri: c.rawUri,
+          host: c.host,
+          port: c.port,
+          ping: ms ?? offlineThreshold,
+        ));
+        done++;
+        onProgress?.call(done, total);
+      }
+    }
+
+    final wc = concurrency < total ? concurrency : total;
+    await Future.wait(List.generate(wc, (_) => worker()));
+
+    if (results.length < total) {
+      final doneIds = results.map((c) => c.id).toSet();
+      for (final c in configs) {
+        if (!doneIds.contains(c.id)) {
+          results.add(VpnConfig(
+            id: c.id,
+            name: c.name,
+            protocol: c.protocol,
+            rawUri: c.rawUri,
+            host: c.host,
+            port: c.port,
+            ping: offlineThreshold,
+          ));
+        }
+      }
+    }
+
+    results.sort((a, b) =>
+        (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
+    return results;
   }
 
-  void dispose() {
-    _timer?.cancel();
-    _statusCtrl.close();
-    _durationCtrl.close();
+  static VpnConfig? best(List<VpnConfig> configs) {
+    if (configs.isEmpty) return null;
+    final sorted = [...configs]
+      ..sort((a, b) =>
+          (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
+    final top = sorted.first;
+    if ((top.ping ?? offlineThreshold) >= offlineThreshold) return null;
+    return top;
   }
 }
