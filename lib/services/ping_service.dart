@@ -3,38 +3,44 @@ import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
-/// سرویس پینگ دو مرحله‌ای (مثل v2rayNG):
-/// مرحله ۱: TCP scan سریع — فیلتر سرورهای خاموش
-/// مرحله ۲: پینگ واقعی از پروکسی — فقط برای سرورهای آنلاین
+/// سرویس پینگ پیشرفته دو مرحله‌ای (مثل v2rayNG):
+/// مرحله ۱: TCP scan موازی و سریع برای فیلتر سرورهای خاموش
+/// مرحله ۲: پینگ واقعی از طریق پروکسی (Xray probe) برای سرورهای آنلاین
 class PingService {
   PingService._();
 
   static const int offlineThreshold = 9999;
-  static const int tcpTimeoutSec = 2;
   static const String realPingUrl = 'https://www.google.com/generate_204';
 
   static FlutterVless? _vless;
   static bool _initialized = false;
+  static bool _cancelled = false;
 
-  /// مقداردهی core
   static Future<void> initialize() async {
     if (_initialized) return;
     _vless ??= FlutterVless(onStatusChanged: (_) {});
     try {
-      await _vless!.initializeVless();
+      await _vless!.initializeVless(
+        notificationIconResourceType: 'mipmap',
+        notificationIconResourceName: 'ic_launcher',
+      );
       _initialized = true;
     } catch (_) {}
   }
 
-  /// پینگ TCP سریع
-  static Future<int?> _tcpPing(VpnConfig config) async {
+  static void cancel() {
+    _cancelled = true;
+  }
+
+  /// مرحله ۱: پینگ TCP سریع
+  static Future<int?> _tcpPing(VpnConfig config, Duration timeout) async {
     if (config.host.isEmpty || config.port <= 0) return null;
     final sw = Stopwatch()..start();
     try {
       final socket = await Socket.connect(
         config.host,
         config.port,
-        timeout: Duration(seconds: tcpTimeoutSec),
+        timeout: timeout,
       );
       socket.destroy();
       sw.stop();
@@ -44,8 +50,9 @@ class PingService {
     }
   }
 
-  /// پینگ واقعی از طریق پروکسی (مثل v2rayNG)
-  static Future<int?> realPing(VpnConfig config) async {
+  /// مرحله ۲: پینگ واقعی از پروکسی
+  static Future<int?> _realPing(VpnConfig config, Duration timeout) async {
+    if (_cancelled) return null;
     try {
       if (!_initialized) await initialize();
       if (_vless == null) return null;
@@ -53,10 +60,9 @@ class PingService {
       final FlutterVlessURL parsed = FlutterVless.parseFromURL(config.rawUri);
       final String jsonConfig = parsed.getFullConfiguration();
 
-      final int delay = await _vless!.getServerDelay(
-        config: jsonConfig,
-        url: realPingUrl,
-      );
+      final int delay = await _vless!
+          .getServerDelay(config: jsonConfig, url: realPingUrl)
+          .timeout(timeout, onTimeout: () => -1);
 
       if (delay < 0 || delay >= offlineThreshold) return null;
       if (delay > 15000) return null;
@@ -66,45 +72,50 @@ class PingService {
     }
   }
 
-  /// پینگ همه سرورها (دو مرحله‌ای)
+  /// پینگ همه سرورها — دو مرحله‌ای
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
+    int tcpConcurrency = 24,
+    int realConcurrency = 3,
+    Duration tcpTimeout = const Duration(seconds: 2),
+    Duration realTimeout = const Duration(seconds: 8),
     void Function(int done, int total)? onProgress,
   }) async {
     if (configs.isEmpty) return [];
+    _cancelled = false;
+    await initialize();
 
     final total = configs.length;
-
-    // ═══ مرحله ۱: TCP scan سریع (concurrency بالا) ═══
     final tcpResults = <String, int?>{};
     int tcpDone = 0;
 
-    Future<void> tcpWorker(List<VpnConfig> batch) async {
-      for (final c in batch) {
-        final ms = await _tcpPing(c);
+    // ═══════ مرحله ۱: TCP scan موازی ═══════
+    int tcpIdx = 0;
+    Future<void> tcpWorker() async {
+      while (true) {
+        if (_cancelled) return;
+        final i = tcpIdx++;
+        if (i >= configs.length) return;
+        final c = configs[i];
+        final ms = await _tcpPing(c, tcpTimeout);
         tcpResults[c.id] = ms;
         tcpDone++;
-        onProgress?.call(tcpDone, total * 2); // نیمی از کار
+        onProgress?.call(tcpDone, total * 2);
       }
     }
 
-    // تقسیم به batch های ۱۶ تایی
-    const batchSize = 16;
-    final batches = <List<VpnConfig>>[];
-    for (var i = 0; i < configs.length; i += batchSize) {
-      batches.add(configs.sublist(
-        i,
-        i + batchSize > configs.length ? configs.length : i + batchSize,
-      ));
+    final tcpWorkerCount =
+        tcpConcurrency < configs.length ? tcpConcurrency : configs.length;
+    await Future.wait(List.generate(tcpWorkerCount, (_) => tcpWorker()));
+
+    if (_cancelled) {
+      return configs;
     }
-    await Future.wait(batches.map(tcpWorker));
 
-    // ═══ مرحله ۲: پینگ واقعی فقط برای آنلاین‌ها ═══
-    final alive = configs.where((c) => tcpResults[c.id] != null).toList();
+    // ═══════ مرحله ۲: Real ping فقط برای آنلاین‌ها ═══════
     final results = <VpnConfig>[];
-    int realDone = 0;
 
-    // اضافه کردن آفلاین‌ها مستقیم
+    // آفلاین‌ها مستقیم
     for (final c in configs) {
       if (tcpResults[c.id] == null) {
         results.add(VpnConfig(
@@ -119,14 +130,18 @@ class PingService {
       }
     }
 
-    // پینگ واقعی با concurrency 4 (چون هر پینگ Xray اجرا می‌کنه)
-    int idx = 0;
+    // آنلاین‌ها با پینگ واقعی
+    final alive = configs.where((c) => tcpResults[c.id] != null).toList();
+    int realIdx = 0;
+    int realDone = 0;
+
     Future<void> realWorker() async {
       while (true) {
-        final i = idx++;
+        if (_cancelled) return;
+        final i = realIdx++;
         if (i >= alive.length) return;
         final c = alive[i];
-        final ms = await realPing(c);
+        final ms = await _realPing(c, realTimeout);
         results.add(VpnConfig(
           id: c.id,
           name: c.name,
@@ -141,12 +156,12 @@ class PingService {
       }
     }
 
-    final realWorkerCount = alive.length < 4 ? alive.length : 4;
+    final realWorkerCount =
+        alive.length < realConcurrency ? alive.length : realConcurrency;
     if (realWorkerCount > 0) {
       await Future.wait(List.generate(realWorkerCount, (_) => realWorker()));
     }
 
-    // مرتب‌سازی
     results.sort((a, b) =>
         (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
     return results;
