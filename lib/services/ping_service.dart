@@ -1,42 +1,66 @@
-import 'dart:io';
 import 'dart:async';
+import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
-/// سرویس پینگ واقعی با اتصال TCP
-/// دقیقاً مثل v2rayNG و بقیه کلاینت‌ها: زمان TCP handshake رو اندازه می‌گیره
+/// سرویس پینگ واقعی از طریق Xray core
+/// دقیقاً مثل v2rayNG: یه Xray موقت اجرا می‌کنه و HTTP probe می‌زنه
 class PingService {
   PingService._();
 
   static const int offlineThreshold = 9999;
-  static const Duration timeout = Duration(seconds: 3);
+  static const String testUrl = 'https://www.google.com/generate_204';
 
-  /// پینگ یک سرور (زمان TCP connect)
-  static Future<int?> pingOne(VpnConfig config) async {
-    if (config.host.isEmpty || config.port <= 0) return null;
+  static FlutterVless? _vless;
+  static bool _initialized = false;
 
-    final sw = Stopwatch()..start();
+  /// مقداردهی اولیه core
+  static Future<void> initialize() async {
+    if (_initialized) return;
+    if (_vless == null) {
+      _vless = FlutterVless(onStatusChanged: (_) {});
+    }
     try {
-      final socket = await Socket.connect(
-        config.host,
-        config.port,
-        timeout: timeout,
+      await _vless!.initializeVless();
+      _initialized = true;
+    } catch (_) {}
+  }
+
+  /// پینگ واقعی یک سرور از طریق پروکسی
+  /// return: میلی‌ثانیه یا null (آفلاین)
+  static Future<int?> pingOne(VpnConfig config) async {
+    try {
+      if (!_initialized) await initialize();
+      if (_vless == null) return null;
+
+      // پارس URI به JSON config
+      final FlutterVlessURL parsed = FlutterVless.parseFromURL(config.rawUri);
+      final String jsonConfig = parsed.getFullConfiguration();
+
+      // اجرای probe از طریق پروکسی
+      final int delay = await _vless!.getServerDelay(
+        config: jsonConfig,
+        url: testUrl,
       );
-      socket.destroy();
-      sw.stop();
-      return sw.elapsedMilliseconds;
+
+      // بررسی نتیجه
+      if (delay < 0 || delay >= offlineThreshold) return null;
+      if (delay > 30000) return null; // بیشتر از ۳۰ ثانیه = آفلاین
+      return delay;
     } catch (_) {
       return null;
     }
   }
 
   /// پینگ همه سرورها به صورت موازی
-  /// concurrency بالا = سرعت بیشتر، ولی فشار بیشتر روی شبکه
+  /// concurrency پایین‌تر = پایدارتر (چون هر پینگ یه Xray جدا اجرا می‌کنه)
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
-    int concurrency = 20,
+    int concurrency = 4,
     void Function(int done, int total)? onProgress,
   }) async {
     if (configs.isEmpty) return [];
+
+    await initialize();
 
     final out = <VpnConfig>[];
     int idx = 0;
@@ -66,13 +90,13 @@ class PingService {
         concurrency < configs.length ? concurrency : configs.length;
     await Future.wait(List.generate(workerCount, (_) => worker()));
 
-    // مرتب‌سازی از سریع‌ترین به کندترین
+    // مرتب‌سازی از سریع‌ترین
     out.sort((a, b) =>
         (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
     return out;
   }
 
-  /// پیدا کردن بهترین سرور (کمترین پینگ)
+  /// پیدا کردن بهترین سرور
   static VpnConfig? best(List<VpnConfig> configs) {
     if (configs.isEmpty) return null;
     final sorted = [...configs]
@@ -81,22 +105,5 @@ class PingService {
     final top = sorted.first;
     if ((top.ping ?? offlineThreshold) >= offlineThreshold) return null;
     return top;
-  }
-
-  /// پینگ مداوم یک سرور (برای اتصال زنده)
-  static Future<int?> pingRealtime(VpnConfig config) async {
-    final sw = Stopwatch()..start();
-    try {
-      final socket = await Socket.connect(
-        config.host,
-        config.port,
-        timeout: const Duration(seconds: 2),
-      );
-      socket.destroy();
-      sw.stop();
-      return sw.elapsedMilliseconds;
-    } catch (_) {
-      return null;
-    }
   }
 }
