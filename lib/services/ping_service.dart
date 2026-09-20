@@ -1,147 +1,96 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
-/// سرویس پینگ پیشرفته دو مرحله‌ای (مثل v2rayNG):
-/// مرحله ۱: TCP scan موازی و سریع برای فیلتر سرورهای خاموش
-/// مرحله ۲: پینگ واقعی از طریق پروکسی (Xray probe) برای سرورهای آنلاین
+/// پینگ واقعی از طریق Xray core — دقیقاً مثل v2rayNG
+/// برای هر سرور، یه Xray موقت با همون کانفیگ اجرا می‌شه
+/// و یه HTTP request از پروکسی زده می‌شه
 class PingService {
   PingService._();
 
   static const int offlineThreshold = 9999;
-  static const String realPingUrl = 'https://www.google.com/generate_204';
+  static const String testUrl = 'https://www.google.com/generate_204';
 
   static FlutterVless? _vless;
   static bool _initialized = false;
   static bool _cancelled = false;
 
+  /// مقداردهی core (فقط یک بار)
   static Future<void> initialize() async {
     if (_initialized) return;
     _vless ??= FlutterVless(onStatusChanged: (_) {});
     try {
-      await _vless!.initializeVless(
-        notificationIconResourceType: 'mipmap',
-        notificationIconResourceName: 'ic_launcher',
-      );
+      await _vless!.initializeVless();
       _initialized = true;
     } catch (_) {}
   }
 
+  /// لغو پینگ
   static void cancel() {
     _cancelled = true;
   }
 
-  /// مرحله ۱: پینگ TCP سریع
-  static Future<int?> _tcpPing(VpnConfig config, Duration timeout) async {
-    if (config.host.isEmpty || config.port <= 0) return null;
-    final sw = Stopwatch()..start();
-    try {
-      final socket = await Socket.connect(
-        config.host,
-        config.port,
-        timeout: timeout,
-      );
-      socket.destroy();
-      sw.stop();
-      return sw.elapsedMilliseconds;
-    } catch (_) {
-      return null;
-    }
+  static void reset() {
+    _cancelled = false;
   }
 
-  /// مرحله ۲: پینگ واقعی از پروکسی
-  static Future<int?> _realPing(VpnConfig config, Duration timeout) async {
+  /// ⭐ پینگ واقعی از پروکسی (مثل v2rayNG)
+  static Future<int?> pingOne(VpnConfig config) async {
     if (_cancelled) return null;
+    if (config.host.isEmpty || config.port <= 0) return null;
+
     try {
       if (!_initialized) await initialize();
       if (_vless == null) return null;
 
+      // پارس URI
       final FlutterVlessURL parsed = FlutterVless.parseFromURL(config.rawUri);
       final String jsonConfig = parsed.getFullConfiguration();
 
+      // ⭐ پینگ واقعی از طریق Xray — دقیقاً مثل v2rayNG
       final int delay = await _vless!
-          .getServerDelay(config: jsonConfig, url: realPingUrl)
-          .timeout(timeout, onTimeout: () => -1);
+          .getServerDelay(
+            config: jsonConfig,
+            url: testUrl,
+          )
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => -1,
+          );
 
       if (delay < 0 || delay >= offlineThreshold) return null;
-      if (delay > 15000) return null;
+      if (delay > 10000) return null;
       return delay;
     } catch (_) {
       return null;
     }
   }
 
-  /// پینگ همه سرورها — دو مرحله‌ای
+  /// پینگ همه سرورها — دقیقاً مثل v2rayNG (concurrency ۲)
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
-    int tcpConcurrency = 24,
-    int realConcurrency = 3,
-    Duration tcpTimeout = const Duration(seconds: 2),
-    Duration realTimeout = const Duration(seconds: 8),
+    int concurrency = 2,
     void Function(int done, int total)? onProgress,
   }) async {
     if (configs.isEmpty) return [];
-    _cancelled = false;
+
+    reset();
     await initialize();
 
-    final total = configs.length;
-    final tcpResults = <String, int?>{};
-    int tcpDone = 0;
-
-    // ═══════ مرحله ۱: TCP scan موازی ═══════
-    int tcpIdx = 0;
-    Future<void> tcpWorker() async {
-      while (true) {
-        if (_cancelled) return;
-        final i = tcpIdx++;
-        if (i >= configs.length) return;
-        final c = configs[i];
-        final ms = await _tcpPing(c, tcpTimeout);
-        tcpResults[c.id] = ms;
-        tcpDone++;
-        onProgress?.call(tcpDone, total * 2);
-      }
-    }
-
-    final tcpWorkerCount =
-        tcpConcurrency < configs.length ? tcpConcurrency : configs.length;
-    await Future.wait(List.generate(tcpWorkerCount, (_) => tcpWorker()));
-
-    if (_cancelled) {
-      return configs;
-    }
-
-    // ═══════ مرحله ۲: Real ping فقط برای آنلاین‌ها ═══════
     final results = <VpnConfig>[];
+    final total = configs.length;
+    int idx = 0;
+    int done = 0;
 
-    // آفلاین‌ها مستقیم
-    for (final c in configs) {
-      if (tcpResults[c.id] == null) {
-        results.add(VpnConfig(
-          id: c.id,
-          name: c.name,
-          protocol: c.protocol,
-          rawUri: c.rawUri,
-          host: c.host,
-          port: c.port,
-          ping: offlineThreshold,
-        ));
-      }
-    }
-
-    // آنلاین‌ها با پینگ واقعی
-    final alive = configs.where((c) => tcpResults[c.id] != null).toList();
-    int realIdx = 0;
-    int realDone = 0;
-
-    Future<void> realWorker() async {
+    Future<void> worker() async {
       while (true) {
         if (_cancelled) return;
-        final i = realIdx++;
-        if (i >= alive.length) return;
-        final c = alive[i];
-        final ms = await _realPing(c, realTimeout);
+        final i = idx++;
+        if (i >= total) return;
+        final c = configs[i];
+
+        final ms = await pingOne(c);
+
         results.add(VpnConfig(
           id: c.id,
           name: c.name,
@@ -151,15 +100,32 @@ class PingService {
           port: c.port,
           ping: ms ?? offlineThreshold,
         ));
-        realDone++;
-        onProgress?.call(total + realDone, total * 2);
+
+        done++;
+        onProgress?.call(done, total);
       }
     }
 
-    final realWorkerCount =
-        alive.length < realConcurrency ? alive.length : realConcurrency;
-    if (realWorkerCount > 0) {
-      await Future.wait(List.generate(realWorkerCount, (_) => realWorker()));
+    final workerCount =
+        concurrency < total ? concurrency : total;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
+
+    // آفلاین‌هایی که cancel شدن هم اضافه کن
+    if (results.length < total) {
+      final doneIds = results.map((c) => c.id).toSet();
+      for (final c in configs) {
+        if (!doneIds.contains(c.id)) {
+          results.add(VpnConfig(
+            id: c.id,
+            name: c.name,
+            protocol: c.protocol,
+            rawUri: c.rawUri,
+            host: c.host,
+            port: c.port,
+            ping: offlineThreshold,
+          ));
+        }
+      }
     }
 
     results.sort((a, b) =>
