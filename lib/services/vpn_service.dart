@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
+import 'ping_service.dart';
 import '../models/log_entry.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
@@ -76,39 +76,6 @@ class VpnService {
     }
   }
 
-  /// پاکسازی — فقط security با مقدار خالی رو حذف می‌کنه
-  String _sanitizeUri(String uri) {
-    try {
-      final hashIndex = uri.indexOf('#');
-      String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
-      String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
-
-      final qIndex = mainPart.indexOf('?');
-      if (qIndex < 0) return uri;
-
-      String basePart = mainPart.substring(0, qIndex);
-      String queryPart = mainPart.substring(qIndex + 1);
-
-      final newParams = <String>[];
-      for (final pair in queryPart.split('&')) {
-        if (pair.isEmpty) continue;
-        final eqIndex = pair.indexOf('=');
-        if (eqIndex < 0) {
-          newParams.add(pair);
-          continue;
-        }
-        final key = pair.substring(0, eqIndex);
-        final value = pair.substring(eqIndex + 1);
-        if (key == 'security' && value.isEmpty) continue;
-        newParams.add(pair);
-      }
-
-      return '$basePart?${newParams.join('&')}$fragment';
-    } catch (_) {
-      return uri;
-    }
-  }
-
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
 
@@ -123,22 +90,19 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      final sanitizedUri = _sanitizeUri(config.rawUri);
-      if (sanitizedUri != config.rawUri) {
-        await _logs.add(LogLevel.info, 'Sanitized: $sanitizedUri');
+      // ⭐ پاکسازی کامل با PingService.sanitizeUri (همون تابعی که برای پینگ استفاده شد)
+      final cleanUri = PingService.sanitizeUri(config.rawUri);
+      if (cleanUri != config.rawUri) {
+        await _logs.add(LogLevel.info, 'Cleaned URI: $cleanUri');
       }
 
-      // پارس
-      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
+      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
       final String jsonConfig = parsedUrl.getFullConfiguration();
       await _logs.add(LogLevel.info, 'Parsed config OK');
 
-      // مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
-      await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // شروع تونل
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
@@ -171,7 +135,6 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
-    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
