@@ -65,48 +65,48 @@ class VpnService {
     }
   }
 
-  /// ⭐ پاکسازی URI از پارامترهای خالی یا ناقص
+  /// ⭐ پاکسازی URI — حذف کامل security=none (نه جایگزینی)
   String _sanitizeUri(String uri) {
     try {
-      // جدا کردن fragment (#remark)
       final hashIndex = uri.indexOf('#');
       String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
       String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
 
-      // جدا کردن query params
       final qIndex = mainPart.indexOf('?');
       if (qIndex < 0) return uri;
 
       String basePart = mainPart.substring(0, qIndex);
       String queryPart = mainPart.substring(qIndex + 1);
 
-      // پارس query params
       final params = <String, String>{};
       for (final pair in queryPart.split('&')) {
         final eqIndex = pair.indexOf('=');
         if (eqIndex < 0) continue;
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        // اگه مقدار خالی بود، رد کن
         if (value.isEmpty) continue;
+
+        // ⭐ security=none رو کامل حذف کن
+        if (key == 'security' && value == 'none') continue;
+
         params[key] = value;
       }
 
-      // ⭐ اگه security نداریم، مقدار پیش‌فرض 'none' بذار
-      if (!params.containsKey('security')) {
-        params['security'] = 'none';
-      }
+      // ⭐ اگه بعد از فیلتر، security نداریم، چیزی اضافه نکن
+      // (پیش‌فرض Xray = بدون TLS)
 
-      // ⭐ اگه fp داریم ولی TLS نیست، fp رو حذف کن
+      // ⭐ اگه TLS/Reality نیست، پارامترهای مربوطه رو حذف کن
       final security = params['security'];
-      if (security != 'tls' && security != 'reality') {
+      if (security == null || security.isEmpty) {
         params.remove('fp');
         params.remove('sni');
         params.remove('alpn');
         params.remove('allowInsecure');
+        params.remove('pbk');
+        params.remove('sid');
+        params.remove('spx');
       }
 
-      // بازسازی URI
       final rebuilt = params.entries
           .map((e) => '${e.key}=${e.value}')
           .join('&');
@@ -163,7 +163,7 @@ class VpnService {
         };
 
         jsonConfig = jsonEncode(cfg);
-        await _logs.add(LogLevel.info, 'Config enhanced with DNS+routing ✅');
+        await _logs.add(LogLevel.info, 'Config enhanced ✅');
       } catch (e) {
         await _logs.add(LogLevel.warning, 'Config enhance failed: $e');
       }
@@ -181,7 +181,7 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected via Xray');
+      await _logs.add(LogLevel.success, '✅ Connected');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
@@ -232,4 +232,4 @@ class VpnService {
     _statusCtrl.close();
     _durationCtrl.close();
   }
-}
+} 
