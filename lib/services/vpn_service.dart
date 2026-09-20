@@ -65,6 +65,58 @@ class VpnService {
     }
   }
 
+  /// ⭐ پاکسازی URI از پارامترهای خالی یا ناقص
+  String _sanitizeUri(String uri) {
+    try {
+      // جدا کردن fragment (#remark)
+      final hashIndex = uri.indexOf('#');
+      String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
+      String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
+
+      // جدا کردن query params
+      final qIndex = mainPart.indexOf('?');
+      if (qIndex < 0) return uri;
+
+      String basePart = mainPart.substring(0, qIndex);
+      String queryPart = mainPart.substring(qIndex + 1);
+
+      // پارس query params
+      final params = <String, String>{};
+      for (final pair in queryPart.split('&')) {
+        final eqIndex = pair.indexOf('=');
+        if (eqIndex < 0) continue;
+        final key = pair.substring(0, eqIndex);
+        final value = pair.substring(eqIndex + 1);
+        // اگه مقدار خالی بود، رد کن
+        if (value.isEmpty) continue;
+        params[key] = value;
+      }
+
+      // ⭐ اگه security نداریم، مقدار پیش‌فرض 'none' بذار
+      if (!params.containsKey('security')) {
+        params['security'] = 'none';
+      }
+
+      // ⭐ اگه fp داریم ولی TLS نیست، fp رو حذف کن
+      final security = params['security'];
+      if (security != 'tls' && security != 'reality') {
+        params.remove('fp');
+        params.remove('sni');
+        params.remove('alpn');
+        params.remove('allowInsecure');
+      }
+
+      // بازسازی URI
+      final rebuilt = params.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('&');
+
+      return '$basePart?$rebuilt$fragment';
+    } catch (e) {
+      return uri;
+    }
+  }
+
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
 
@@ -77,52 +129,36 @@ class VpnService {
       if (!_initialized) await initialize();
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
-      await _logs.add(LogLevel.info, 'URI: ${config.rawUri}');
 
-      // ⭐ ۱. پارس URI به URL object
-      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(config.rawUri);
+      // ⭐ پاکسازی URI
+      final sanitizedUri = _sanitizeUri(config.rawUri);
+      await _logs.add(LogLevel.info, 'Sanitized URI: $sanitizedUri');
 
-      // ⭐ ۲. دریافت config JSON
+      // ⭐ پارس URI
+      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
+
+      // ⭐ دریافت config JSON
       String jsonConfig = parsedUrl.getFullConfiguration();
       await _logs.add(LogLevel.info, 'Parsed config OK');
 
-      // ⭐ ۳. تزریق DNS + routing (کلید موفقیت اتصال!)
+      // ⭐ تزریق DNS + routing
       try {
         final Map<String, dynamic> cfg =
             jsonDecode(jsonConfig) as Map<String, dynamic>;
 
-        // DNS — کوئری‌های DNS مستقیم برن (سریع‌تر)
         cfg['dns'] = {
           'servers': [
-            {'address': '1.1.1.1', 'skipFallback': false},
-            {'address': '8.8.8.8', 'skipFallback': false},
+            {'address': '1.1.1.1'},
+            {'address': '8.8.8.8'},
           ],
           'queryStrategy': 'UseIP',
-          'tag': 'dns_inbound',
         };
 
-        // Routing — کلید موفقیت
         cfg['routing'] = {
           'domainStrategy': 'IPIfNonMatch',
           'rules': [
-            // DNS queries مستقیم
-            {
-              'type': 'field',
-              'outboundTag': 'direct',
-              'port': '53',
-            },
-            // IPs خصوصی مستقیم
-            {
-              'type': 'field',
-              'outboundTag': 'direct',
-              'ip': ['geoip:private'],
-            },
-            // SNI sniffing
-            {
-              'type': 'field',
-              'inboundTag': ['socks-inbound', 'tun-in'],
-              'outboundTag': 'proxy',
-            },
+            {'type': 'field', 'outboundTag': 'direct', 'port': '53'},
+            {'type': 'field', 'outboundTag': 'direct', 'ip': ['geoip:private']},
           ],
         };
 
@@ -132,17 +168,10 @@ class VpnService {
         await _logs.add(LogLevel.warning, 'Config enhance failed: $e');
       }
 
-      // ⭐ ۴. درخواست مجوز Notification (اندروید ۱۳+)
-      if (Platform.isAndroid) {
-        await _logs.add(LogLevel.info, 'Requesting permissions...');
-      }
-
-      // ⭐ ۵. درخواست مجوز VPN
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ⭐ ۶. شروع تونل VPN (TUN mode)
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
