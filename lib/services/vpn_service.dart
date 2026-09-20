@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -15,6 +14,7 @@ class VpnService {
   VpnConfig? _current;
   String? _lastError;
   bool _initialized = false;
+  bool _manualDisconnect = false;
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
@@ -34,13 +34,22 @@ class VpnService {
   VpnService() {
     _vless = FlutterVless(
       onStatusChanged: (status) {
-        _logs.add(LogLevel.info,
-            'state=${status.state} conn=${status.connectionState.name}');
-        if (status.connectionState.name.contains('connected') &&
-            !status.connectionState.name.contains('disconnected')) {
+        final conn = status.connectionState.name.toLowerCase();
+        _logs.add(LogLevel.info, 'state=${status.state} conn=$conn');
+
+        // ⭐ اگه کاربر خودش قطع نکرده ولی وضعیت disconnected شد → خطای خودکار
+        if (conn.contains('disconnected') &&
+            _status == VpnStatus.connected &&
+            !_manualDisconnect) {
+          _lastError = 'اتصال توسط سرور قطع شد';
+          _status = VpnStatus.error;
+          _statusCtrl.add(_status);
+          _stopTimer();
+        } else if (conn.contains('connected') &&
+            !conn.contains('disconnected')) {
           _status = VpnStatus.connected;
           _statusCtrl.add(_status);
-        } else if (status.connectionState.name.contains('disconnected')) {
+        } else if (conn.contains('disconnected')) {
           _status = VpnStatus.disconnected;
           _statusCtrl.add(_status);
         }
@@ -65,8 +74,7 @@ class VpnService {
     }
   }
 
-  /// ⭐ پاکسازی محافظه‌کارانه:
-  /// فقط `security=` خالی رو حذف می‌کنه. بقیه چیزها دست نخورده.
+  /// پاکسازی حداقلی — فقط `security=` خالی رو حذف می‌کنه
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -82,30 +90,21 @@ class VpnService {
       final newParams = <String>[];
       for (final pair in queryPart.split('&')) {
         if (pair.isEmpty) continue;
-
         final eqIndex = pair.indexOf('=');
         if (eqIndex < 0) {
-          // پارامتر بدون مقدار → نگه‌دار
           newParams.add(pair);
           continue;
         }
-
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-
-        // ⭐ فقط این یه حالت رو اصلاح کن:
-        // اگه security داریم ولی مقدارش خالیه → کاملاً حذفش کن
-        if (key == 'security' && value.isEmpty) {
-          continue;
-        }
-
-        // بقیه پارامترها رو دست نزن — حتی اگه خالی باشن
+        // فقط این یک حالت رو اصلاح کن
+        if (key == 'security' && value.isEmpty) continue;
         newParams.add(pair);
       }
 
       final rebuilt = newParams.join('&');
       return '$basePart?$rebuilt$fragment';
-    } catch (e) {
+    } catch (_) {
       return uri;
     }
   }
@@ -113,6 +112,7 @@ class VpnService {
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
 
+    _manualDisconnect = false;
     _status = VpnStatus.connecting;
     _statusCtrl.add(_status);
     _current = config;
@@ -123,59 +123,79 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ⭐ پاکسازی محافظه‌کارانه
       final sanitizedUri = _sanitizeUri(config.rawUri);
       if (sanitizedUri != config.rawUri) {
         await _logs.add(LogLevel.info, 'Sanitized URI: $sanitizedUri');
       }
 
-      // ⭐ پارس URI
-      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
+      // پارس URI
+      FlutterVlessURL parsedUrl;
+      try {
+        parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
+      } catch (e) {
+        throw Exception('پارس کانفیگ ناموفق بود: $e');
+      }
 
-      // ⭐ دریافت config JSON
-      String jsonConfig = parsedUrl.getFullConfiguration();
-      await _logs.add(LogLevel.info, 'Parsed config OK');
+      // دریافت config
+      String jsonConfig;
+      try {
+        jsonConfig = parsedUrl.getFullConfiguration();
+      } catch (e) {
+        throw Exception('تولید config ناموفق بود: $e');
+      }
 
-      // ⭐ تزریق DNS + routing
+      // تزریق DNS + routing (برای عبور ترافیک)
       try {
         final Map<String, dynamic> cfg =
             jsonDecode(jsonConfig) as Map<String, dynamic>;
 
-        cfg['dns'] = {
-          'servers': [
-            {'address': '1.1.1.1'},
-            {'address': '8.8.8.8'},
-          ],
-          'queryStrategy': 'UseIP',
-        };
+        // فقط اگه DNS از قبل نبود، اضافه کن
+        cfg.putIfAbsent('dns', () => {
+              'servers': [
+                {'address': '1.1.1.1'},
+                {'address': '8.8.8.8'},
+              ],
+              'queryStrategy': 'UseIP',
+            });
 
-        cfg['routing'] = {
-          'domainStrategy': 'IPIfNonMatch',
-          'rules': [
-            {'type': 'field', 'outboundTag': 'direct', 'port': '53'},
-            {'type': 'field', 'outboundTag': 'direct', 'ip': ['geoip:private']},
-          ],
-        };
+        // فقط اگه routing از قبل نبود، اضافه کن
+        cfg.putIfAbsent('routing', () => {
+              'domainStrategy': 'IPIfNonMatch',
+              'rules': [
+                {'type': 'field', 'outboundTag': 'direct', 'port': '53'},
+                {
+                  'type': 'field',
+                  'outboundTag': 'direct',
+                  'ip': ['geoip:private']
+                },
+              ],
+            });
 
         jsonConfig = jsonEncode(cfg);
-        await _logs.add(LogLevel.info, 'Config enhanced ✅');
       } catch (e) {
-        await _logs.add(LogLevel.warning, 'Config enhance failed: $e');
+        await _logs.add(LogLevel.warning, 'Config enhance skipped: $e');
       }
 
+      // درخواست مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
+      // شروع تونل
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
         proxyOnly: false,
       );
 
+      // ⭐ مرحله حیاتی: منتظر تأیید واقعی اتصال
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
+
+      // Health check با timeout 8 ثانیه
+      unawaited(_healthCheck());
+
       await _logs.add(LogLevel.success, '✅ Connected');
       return true;
     } catch (e) {
@@ -187,8 +207,40 @@ class VpnService {
     }
   }
 
+  /// بررسی سلامت اتصال در پس‌زمینه
+  Future<void> _healthCheck() async {
+    try {
+      await Future.delayed(const Duration(seconds: 2));
+      if (_status != VpnStatus.connected) return;
+
+      final delay = await _vless
+          .getConnectedServerDelay(url: 'https://www.google.com/generate_204')
+          .timeout(const Duration(seconds: 6), onTimeout: () => -1);
+
+      if (delay < 0 || delay > 15000) {
+        await _logs.add(LogLevel.error,
+            'Health check failed (delay=$delay) — اتصال قطع شد');
+        // فقط اگه کاربر خودش قطع نکرده بود
+        if (!_manualDisconnect && _status == VpnStatus.connected) {
+          _lastError = 'سرور پاسخ نمی‌دهد';
+          try {
+            await _vless.stopVless();
+          } catch (_) {}
+          _status = VpnStatus.error;
+          _statusCtrl.add(_status);
+          _stopTimer();
+        }
+      } else {
+        await _logs.add(LogLevel.success, 'Health check OK: ${delay}ms');
+      }
+    } catch (e) {
+      await _logs.add(LogLevel.warning, 'Health check error: $e');
+    }
+  }
+
   Future<void> disconnect() async {
-    if (!isConnected) return;
+    if (!isConnected && _status != VpnStatus.error) return;
+    _manualDisconnect = true;
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
@@ -198,11 +250,11 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
-    await _logs.add(LogLevel.info, 'Disconnected');
+    await _logs.add(LogLevel.info, 'Disconnected by user');
   }
 
   Future<void> toggle(VpnConfig config) async {
-    if (isConnected) await disconnect();
+    if (isConnected || _status == VpnStatus.error) await disconnect();
     else await connect(config);
   }
 
