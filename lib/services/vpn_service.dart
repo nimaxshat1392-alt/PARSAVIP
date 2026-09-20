@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
-import 'ping_service.dart';
+import 'xray_config_builder.dart';
 import '../models/log_entry.dart';
 
 enum VpnStatus { disconnected, connecting, connected, disconnecting, error }
@@ -90,21 +90,16 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ⭐ پاکسازی کامل با PingService.sanitizeUri (همون تابعی که برای پینگ استفاده شد)
-      final cleanUri = PingService.sanitizeUri(config.rawUri);
-      if (cleanUri != config.rawUri) {
-        await _logs.add(LogLevel.info, 'Cleaned URI: $cleanUri');
-      }
-
-      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-      final String jsonConfig = parsedUrl.getFullConfiguration();
-      await _logs.add(LogLevel.info, 'Parsed config OK');
+      // ⭐ ساخت JSON دستی — بدون parseFromURL
+      final String jsonConfig = XrayConfigBuilder.build(config);
+      await _logs.add(LogLevel.info, 'Built JSON config OK');
 
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
+      await _logs.add(LogLevel.info, 'VPN permission granted');
 
       await _vless.startVless(
-        remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
+        remark: config.name,
         config: jsonConfig,
         proxyOnly: false,
       );
