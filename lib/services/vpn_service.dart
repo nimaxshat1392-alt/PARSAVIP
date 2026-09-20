@@ -65,7 +65,8 @@ class VpnService {
     }
   }
 
-  /// ⭐ پاکسازی URI — حذف کامل security=none (نه جایگزینی)
+  /// ⭐ پاکسازی محافظه‌کارانه:
+  /// فقط `security=` خالی رو حذف می‌کنه. بقیه چیزها دست نخورده.
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -78,39 +79,31 @@ class VpnService {
       String basePart = mainPart.substring(0, qIndex);
       String queryPart = mainPart.substring(qIndex + 1);
 
-      final params = <String, String>{};
+      final newParams = <String>[];
       for (final pair in queryPart.split('&')) {
+        if (pair.isEmpty) continue;
+
         final eqIndex = pair.indexOf('=');
-        if (eqIndex < 0) continue;
+        if (eqIndex < 0) {
+          // پارامتر بدون مقدار → نگه‌دار
+          newParams.add(pair);
+          continue;
+        }
+
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        if (value.isEmpty) continue;
 
-        // ⭐ security=none رو کامل حذف کن
-        if (key == 'security' && value == 'none') continue;
+        // ⭐ فقط این یه حالت رو اصلاح کن:
+        // اگه security داریم ولی مقدارش خالیه → کاملاً حذفش کن
+        if (key == 'security' && value.isEmpty) {
+          continue;
+        }
 
-        params[key] = value;
+        // بقیه پارامترها رو دست نزن — حتی اگه خالی باشن
+        newParams.add(pair);
       }
 
-      // ⭐ اگه بعد از فیلتر، security نداریم، چیزی اضافه نکن
-      // (پیش‌فرض Xray = بدون TLS)
-
-      // ⭐ اگه TLS/Reality نیست، پارامترهای مربوطه رو حذف کن
-      final security = params['security'];
-      if (security == null || security.isEmpty) {
-        params.remove('fp');
-        params.remove('sni');
-        params.remove('alpn');
-        params.remove('allowInsecure');
-        params.remove('pbk');
-        params.remove('sid');
-        params.remove('spx');
-      }
-
-      final rebuilt = params.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('&');
-
+      final rebuilt = newParams.join('&');
       return '$basePart?$rebuilt$fragment';
     } catch (e) {
       return uri;
@@ -130,9 +123,11 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ⭐ پاکسازی URI
+      // ⭐ پاکسازی محافظه‌کارانه
       final sanitizedUri = _sanitizeUri(config.rawUri);
-      await _logs.add(LogLevel.info, 'Sanitized URI: $sanitizedUri');
+      if (sanitizedUri != config.rawUri) {
+        await _logs.add(LogLevel.info, 'Sanitized URI: $sanitizedUri');
+      }
 
       // ⭐ پارس URI
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
@@ -232,4 +227,4 @@ class VpnService {
     _statusCtrl.close();
     _durationCtrl.close();
   }
-} 
+}
