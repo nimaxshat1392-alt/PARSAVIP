@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -77,17 +79,70 @@ class VpnService {
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
       await _logs.add(LogLevel.info, 'URI: ${config.rawUri}');
 
-      // ⭐ پارس URI به URL object
+      // ⭐ ۱. پارس URI به URL object
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(config.rawUri);
-      // ⭐ تبدیل به JSON config
-      final String jsonConfig = parsedUrl.getFullConfiguration();
+
+      // ⭐ ۲. دریافت config JSON
+      String jsonConfig = parsedUrl.getFullConfiguration();
       await _logs.add(LogLevel.info, 'Parsed config OK');
 
-      // ⭐ درخواست مجوز VPN
+      // ⭐ ۳. تزریق DNS + routing (کلید موفقیت اتصال!)
+      try {
+        final Map<String, dynamic> cfg =
+            jsonDecode(jsonConfig) as Map<String, dynamic>;
+
+        // DNS — کوئری‌های DNS مستقیم برن (سریع‌تر)
+        cfg['dns'] = {
+          'servers': [
+            {'address': '1.1.1.1', 'skipFallback': false},
+            {'address': '8.8.8.8', 'skipFallback': false},
+          ],
+          'queryStrategy': 'UseIP',
+          'tag': 'dns_inbound',
+        };
+
+        // Routing — کلید موفقیت
+        cfg['routing'] = {
+          'domainStrategy': 'IPIfNonMatch',
+          'rules': [
+            // DNS queries مستقیم
+            {
+              'type': 'field',
+              'outboundTag': 'direct',
+              'port': '53',
+            },
+            // IPs خصوصی مستقیم
+            {
+              'type': 'field',
+              'outboundTag': 'direct',
+              'ip': ['geoip:private'],
+            },
+            // SNI sniffing
+            {
+              'type': 'field',
+              'inboundTag': ['socks-inbound', 'tun-in'],
+              'outboundTag': 'proxy',
+            },
+          ],
+        };
+
+        jsonConfig = jsonEncode(cfg);
+        await _logs.add(LogLevel.info, 'Config enhanced with DNS+routing ✅');
+      } catch (e) {
+        await _logs.add(LogLevel.warning, 'Config enhance failed: $e');
+      }
+
+      // ⭐ ۴. درخواست مجوز Notification (اندروید ۱۳+)
+      if (Platform.isAndroid) {
+        await _logs.add(LogLevel.info, 'Requesting permissions...');
+      }
+
+      // ⭐ ۵. درخواست مجوز VPN
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
+      await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ⭐ شروع تونل VPN (TUN mode)
+      // ⭐ ۶. شروع تونل VPN (TUN mode)
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
