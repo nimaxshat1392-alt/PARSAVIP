@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
-import 'native_vpn.dart';
 import 'log_service.dart';
 import '../models/log_entry.dart';
 
@@ -12,12 +11,12 @@ class VpnService {
   VpnStatus _status = VpnStatus.disconnected;
   VpnConfig? _current;
   String? _lastError;
+  bool _initialized = false;
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
   Timer? _timer;
   Duration _duration = Duration.zero;
-  StreamSubscription? _eventSub;
 
   VpnStatus get status => _status;
   VpnConfig? get current => _current;
@@ -26,49 +25,58 @@ class VpnService {
   Stream<Duration> get durationStream => _durationCtrl.stream;
   Duration get duration => _duration;
   bool get isConnected => _status == VpnStatus.connected;
-  bool get isBusy => _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
+  bool get isBusy =>
+      _status == VpnStatus.connecting || _status == VpnStatus.disconnecting;
 
-  /// مقداردهی اولیه: گوش دادن به رویدادهای Native
   Future<void> initialize() async {
-    if (!Platform.isAndroid) return;
-    _eventSub = NativeVpn.events.listen((event) {
-      final ev = event['event'];
-      if (ev == 'connected') {
-        _status = VpnStatus.connected;
-        _statusCtrl.add(_status);
-      } else if (ev == 'disconnected') {
-        _status = VpnStatus.disconnected;
-        _statusCtrl.add(_status);
-      } else if (ev == 'error') {
-        _lastError = event['message'];
-        _status = VpnStatus.error;
-        _statusCtrl.add(_status);
-      }
-    }, onError: (_) {});
+    if (_initialized) return;
+    try {
+      await FlutterVless.initializeVless();
+      _initialized = true;
+      await _logs.add(LogLevel.info, 'Xray core initialized');
+    } catch (e) {
+      _lastError = e.toString();
+      await _logs.add(LogLevel.error, 'Init failed: $e');
+    }
   }
 
-  /// اتصال به VPN با استفاده از کد Native
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
+
     _status = VpnStatus.connecting;
     _statusCtrl.add(_status);
     _current = config;
     _lastError = null;
 
     try {
-      await _logs.add(LogLevel.info, 'Starting Native VPN: ${config.protocolShort}');
-      // کد Native مسئول تبدیل URI به JSON و مدیریت اتصال است
-      final ok = await NativeVpn.start(config.rawUri);
-      if (!ok) {
-        throw Exception('Native VPN start failed');
-      }
-      // وضعیت نهایی از طریق استریم رویدادها به‌روزرسانی می‌شود
+      if (!_initialized) await initialize();
+
+      await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
+      await _logs.add(LogLevel.info, 'URI: ${config.rawUri}');
+
+      // ⭐ پارس URI به JSON config
+      final FlutterV2RayURL parsedUrl = FlutterVless.parseFromURL(config.rawUri);
+      final String jsonConfig = parsedUrl.getFullConfiguration();
+      await _logs.add(LogLevel.info, 'Parsed config OK');
+
+      final bool permitted = await FlutterVless.requestPermission();
+      if (!permitted) throw Exception('VPN permission denied');
+
+      await FlutterVless.startVless(
+        remark: config.name,
+        config: jsonConfig,
+      );
+
+      _status = VpnStatus.connected;
+      _statusCtrl.add(_status);
+      _startTimer();
+      await _logs.add(LogLevel.success, '✅ Connected via Xray');
       return true;
     } catch (e) {
-      _lastError = e.toString();
+      _lastError = e.toString().replaceFirst('Exception: ', '');
       _status = VpnStatus.error;
       _statusCtrl.add(_status);
-      await _logs.add(LogLevel.error, 'Native connect failed: $e');
+      await _logs.add(LogLevel.error, '❌ $e');
       return false;
     }
   }
@@ -78,17 +86,18 @@ class VpnService {
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
-      await NativeVpn.stop();
+      await FlutterVless.stopVless();
     } catch (_) {}
-    // وضعیت نهایی از طریق استریم رویدادها به‌روزرسانی می‌شود
+    _status = VpnStatus.disconnected;
+    _current = null;
+    _stopTimer();
+    _statusCtrl.add(_status);
+    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
-    if (isConnected) {
-      await disconnect();
-    } else {
-      await connect(config);
-    }
+    if (isConnected) await disconnect();
+    else await connect(config);
   }
 
   void _startTimer() {
@@ -109,7 +118,6 @@ class VpnService {
 
   void dispose() {
     _timer?.cancel();
-    _eventSub?.cancel();
     _statusCtrl.close();
     _durationCtrl.close();
   }
