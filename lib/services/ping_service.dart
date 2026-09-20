@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
+import 'xray_config_builder.dart';
 
-/// پینگ دو روشی:
-/// ۱. اول Xray ping (مثل v2rayNG) — دقیق
-/// ۲. اگه Xray fail داد → TCP ping (fallback)
+/// پینگ دو مرحله‌ای:
+/// ۱. Xray ping با config ساخته‌شده دستی (مثل v2rayNG)
+/// ۲. اگه Xray fail داد → TCP ping به عنوان fallback
 class PingService {
   PingService._();
 
@@ -28,61 +29,15 @@ class PingService {
   static void cancel() => _cancelled = true;
   static void reset() => _cancelled = false;
 
-  /// ⭐ پاکسازی کامل URI — حذف `security=none`، `security=` خالی و پارامترهای خالی
-  static String sanitizeUri(String uri) {
-    try {
-      final hashIndex = uri.indexOf('#');
-      String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
-      String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
-
-      final qIndex = mainPart.indexOf('?');
-      if (qIndex < 0) return uri;
-
-      String basePart = mainPart.substring(0, qIndex);
-      String queryPart = mainPart.substring(qIndex + 1);
-
-      final newParams = <String>[];
-      for (final pair in queryPart.split('&')) {
-        if (pair.isEmpty) continue;
-        final eqIndex = pair.indexOf('=');
-        if (eqIndex < 0) {
-          newParams.add(pair);
-          continue;
-        }
-        final key = pair.substring(0, eqIndex);
-        final value = pair.substring(eqIndex + 1);
-
-        // ⭐ حذف همه حالت‌های `security` که Xray قبول نمی‌کنه
-        if (key == 'security') {
-          if (value.isEmpty || value == 'none') continue;
-        }
-
-        // حذف پارامترهای خالی
-        if (value.isEmpty) continue;
-
-        newParams.add(pair);
-      }
-
-      return '$basePart?${newParams.join('&')}$fragment';
-    } catch (_) {
-      return uri;
-    }
-  }
-
-  /// پینگ Xray (مثل v2rayNG)
-  static Future<int?> _xrayPing(VpnConfig config) async {
+  static Future<int?> _xrayPing(VpnConfig c) async {
     try {
       if (!_initialized) await initialize();
       if (_vless == null) return null;
 
-      // ⭐ کانفیگ رو با sanitizer آماده کن
-      final cleanUri = sanitizeUri(config.rawUri);
-      final FlutterVlessURL parsed = FlutterVless.parseFromURL(cleanUri);
-      final String jsonConfig = parsed.getFullConfiguration();
-
+      final jsonConfig = XrayConfigBuilder.build(c);
       final int delay = await _vless!
           .getServerDelay(config: jsonConfig, url: testUrl)
-          .timeout(const Duration(seconds: 12), onTimeout: () => -1);
+          .timeout(const Duration(seconds: 10), onTimeout: () => -1);
 
       if (delay < 0 || delay >= offlineThreshold || delay > 10000) return null;
       return delay;
@@ -91,14 +46,13 @@ class PingService {
     }
   }
 
-  /// پینگ TCP (fallback)
-  static Future<int?> _tcpPing(VpnConfig config) async {
-    if (config.host.isEmpty || config.port <= 0) return null;
+  static Future<int?> _tcpPing(VpnConfig c) async {
+    if (c.host.isEmpty || c.port <= 0) return null;
     final sw = Stopwatch()..start();
     try {
       final socket = await Socket.connect(
-        config.host,
-        config.port,
+        c.host,
+        c.port,
         timeout: const Duration(seconds: 3),
       );
       socket.destroy();
@@ -109,21 +63,14 @@ class PingService {
     }
   }
 
-  /// پینگ یک سرور: اول Xray، اگه fail داد TCP
-  static Future<int?> pingOne(VpnConfig config) async {
+  static Future<int?> pingOne(VpnConfig c) async {
     if (_cancelled) return null;
-
-    // ۱. Xray ping
-    final xrayMs = await _xrayPing(config);
-    if (xrayMs != null) return xrayMs;
-
+    final xray = await _xrayPing(c);
+    if (xray != null) return xray;
     if (_cancelled) return null;
-
-    // ۲. Fallback به TCP
-    return await _tcpPing(config);
+    return await _tcpPing(c);
   }
 
-  /// پینگ همه سرورها
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
     int concurrency = 2,
