@@ -61,7 +61,7 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             children: [
               const SizedBox(height: 8),
-              _StatusChip(),  // ⭐ بدون const
+              const _StatusChip(),
               const SizedBox(height: 8),
               const Expanded(
                 flex: 5,
@@ -92,7 +92,7 @@ class HomeScreen extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════
-// Status Chip — استفاده از if-else به جای switch
+// Status Chip — استفاده از .name (بدون نیاز به enum type)
 // ═══════════════════════════════════════════════
 class _StatusChip extends StatelessWidget {
   const _StatusChip();
@@ -100,21 +100,22 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final s = app.status;
+    // ⭐ استفاده از .name — string مقایسه
+    final statusName = app.status.name;
 
     Color color;
     String text;
 
-    if (s == VpnStatus.connected) {
+    if (statusName == 'connected') {
       color = C.success;
       text = 'CONNECTED';
-    } else if (s == VpnStatus.connecting) {
+    } else if (statusName == 'connecting') {
       color = C.warning;
       text = 'CONNECTING...';
-    } else if (s == VpnStatus.disconnecting) {
+    } else if (statusName == 'disconnecting') {
       color = C.warning;
       text = 'DISCONNECTING...';
-    } else if (s == VpnStatus.error) {
+    } else if (statusName == 'error') {
       color = C.danger;
       text = 'ERROR';
     } else {
