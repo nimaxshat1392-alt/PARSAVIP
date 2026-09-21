@@ -95,10 +95,6 @@ class AppState extends ChangeNotifier {
   Future<void> toggleConnection() async {
     if (selected == null) return;
     await vpn.toggle(selected!);
-    await logs.add(
-      LogLevel.info,
-      isConnected ? 'Connected to ${selected!.host}' : 'Disconnected',
-    );
     notifyListeners();
   }
 
@@ -108,10 +104,6 @@ class AppState extends ChangeNotifier {
     if (best != null) {
       await selectConfig(best);
       await vpn.connect(best);
-      await logs.add(
-        LogLevel.success,
-        'Connected to best: ${best.host}',
-      );
       notifyListeners();
     }
   }
@@ -124,16 +116,12 @@ class AppState extends ChangeNotifier {
 
   Future<bool> addConfig(String uri) async {
     final c = ConfigParser.parse(uri, index: configs.length);
-    if (c == null) {
-      await logs.add(LogLevel.error, 'Invalid URI');
-      return false;
-    }
+    if (c == null) return false;
     if (configs.any((x) => x.host == c.host && x.port == c.port)) {
       return false;
     }
     configs.add(c);
     await storage.saveConfigs(configs);
-    await logs.add(LogLevel.success, 'Added ${c.host}');
     notifyListeners();
     return true;
   }
@@ -143,9 +131,6 @@ class AppState extends ChangeNotifier {
     for (final u in uris) {
       final ok = await addConfig(u);
       if (ok) added++;
-    }
-    if (added > 0) {
-      await logs.add(LogLevel.success, 'Bulk import: $added');
     }
     return added;
   }
@@ -165,7 +150,6 @@ class AppState extends ChangeNotifier {
     selected = null;
     await storage.saveConfigs(configs);
     await storage.saveSelectedId(null);
-    await logs.add(LogLevel.warning, 'All configs cleared');
     notifyListeners();
   }
 
@@ -174,10 +158,7 @@ class AppState extends ChangeNotifier {
     if (ok) {
       isAdmin = true;
       await storage.setAdminSession(true);
-      await logs.add(LogLevel.success, 'Admin logged in');
       notifyListeners();
-    } else {
-      await logs.add(LogLevel.warning, 'Failed admin login');
     }
     return ok;
   }
