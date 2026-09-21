@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -13,7 +15,6 @@ class VpnService {
   VpnConfig? _current;
   String? _lastError;
   bool _initialized = false;
-  bool _manualDisconnect = false;
 
   final _statusCtrl = StreamController<VpnStatus>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();
@@ -33,26 +34,15 @@ class VpnService {
   VpnService() {
     _vless = FlutterVless(
       onStatusChanged: (status) {
-        final conn = status.connectionState.name.toLowerCase();
-        _logs.add(LogLevel.info, 'state=${status.state} conn=$conn');
-
-        if (conn.contains('connected') && !conn.contains('disconnected')) {
-          if (_status != VpnStatus.connected) {
-            _status = VpnStatus.connected;
-            _statusCtrl.add(_status);
-            if (_timer == null) _startTimer();
-          }
-        } else if (conn.contains('disconnected')) {
-          if (!_manualDisconnect && _status == VpnStatus.connected) {
-            _lastError = 'اتصال قطع شد';
-            _status = VpnStatus.error;
-            _statusCtrl.add(_status);
-            _stopTimer();
-          } else if (_status != VpnStatus.disconnecting) {
-            _status = VpnStatus.disconnected;
-            _statusCtrl.add(_status);
-            _stopTimer();
-          }
+        _logs.add(LogLevel.info,
+            'state=${status.state} conn=${status.connectionState.name}');
+        if (status.connectionState.name.contains('connected') &&
+            !status.connectionState.name.contains('disconnected')) {
+          _status = VpnStatus.connected;
+          _statusCtrl.add(_status);
+        } else if (status.connectionState.name.contains('disconnected')) {
+          _status = VpnStatus.disconnected;
+          _statusCtrl.add(_status);
         }
       },
     );
@@ -75,7 +65,7 @@ class VpnService {
     }
   }
 
-  /// فقط security= (خالی) رو حذف کن
+  /// ⭐ پاکسازی URI — حذف کامل security=none (نه جایگزینی)
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -88,23 +78,41 @@ class VpnService {
       String basePart = mainPart.substring(0, qIndex);
       String queryPart = mainPart.substring(qIndex + 1);
 
-      final newParams = <String>[];
+      final params = <String, String>{};
       for (final pair in queryPart.split('&')) {
-        if (pair.isEmpty) continue;
         final eqIndex = pair.indexOf('=');
-        if (eqIndex < 0) {
-          newParams.add(pair);
-          continue;
-        }
+        if (eqIndex < 0) continue;
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        // فقط اگه security= خالی بود حذف کن
-        if (key == 'security' && value.isEmpty) continue;
-        newParams.add(pair);
+        if (value.isEmpty) continue;
+
+        // ⭐ security=none رو کامل حذف کن
+        if (key == 'security' && value == 'none') continue;
+
+        params[key] = value;
       }
 
-      return '$basePart?${newParams.join('&')}$fragment';
-    } catch (_) {
+      // ⭐ اگه بعد از فیلتر، security نداریم، چیزی اضافه نکن
+      // (پیش‌فرض Xray = بدون TLS)
+
+      // ⭐ اگه TLS/Reality نیست، پارامترهای مربوطه رو حذف کن
+      final security = params['security'];
+      if (security == null || security.isEmpty) {
+        params.remove('fp');
+        params.remove('sni');
+        params.remove('alpn');
+        params.remove('allowInsecure');
+        params.remove('pbk');
+        params.remove('sid');
+        params.remove('spx');
+      }
+
+      final rebuilt = params.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('&');
+
+      return '$basePart?$rebuilt$fragment';
+    } catch (e) {
       return uri;
     }
   }
@@ -112,7 +120,6 @@ class VpnService {
   Future<bool> connect(VpnConfig config) async {
     if (isBusy || isConnected) return false;
 
-    _manualDisconnect = false;
     _status = VpnStatus.connecting;
     _statusCtrl.add(_status);
     _current = config;
@@ -123,14 +130,43 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      final cleanUri = _sanitizeUri(config.rawUri);
-      if (cleanUri != config.rawUri) {
-        await _logs.add(LogLevel.info, 'Cleaned URI: $cleanUri');
-      }
+      // ⭐ پاکسازی URI
+      final sanitizedUri = _sanitizeUri(config.rawUri);
+      await _logs.add(LogLevel.info, 'Sanitized URI: $sanitizedUri');
 
-      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-      final String jsonConfig = parsedUrl.getFullConfiguration();
+      // ⭐ پارس URI
+      final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(sanitizedUri);
+
+      // ⭐ دریافت config JSON
+      String jsonConfig = parsedUrl.getFullConfiguration();
       await _logs.add(LogLevel.info, 'Parsed config OK');
+
+      // ⭐ تزریق DNS + routing
+      try {
+        final Map<String, dynamic> cfg =
+            jsonDecode(jsonConfig) as Map<String, dynamic>;
+
+        cfg['dns'] = {
+          'servers': [
+            {'address': '1.1.1.1'},
+            {'address': '8.8.8.8'},
+          ],
+          'queryStrategy': 'UseIP',
+        };
+
+        cfg['routing'] = {
+          'domainStrategy': 'IPIfNonMatch',
+          'rules': [
+            {'type': 'field', 'outboundTag': 'direct', 'port': '53'},
+            {'type': 'field', 'outboundTag': 'direct', 'ip': ['geoip:private']},
+          ],
+        };
+
+        jsonConfig = jsonEncode(cfg);
+        await _logs.add(LogLevel.info, 'Config enhanced ✅');
+      } catch (e) {
+        await _logs.add(LogLevel.warning, 'Config enhance failed: $e');
+      }
 
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
@@ -157,8 +193,7 @@ class VpnService {
   }
 
   Future<void> disconnect() async {
-    if (_status == VpnStatus.disconnected) return;
-    _manualDisconnect = true;
+    if (!isConnected) return;
     _status = VpnStatus.disconnecting;
     _statusCtrl.add(_status);
     try {
@@ -168,14 +203,12 @@ class VpnService {
     _current = null;
     _stopTimer();
     _statusCtrl.add(_status);
+    await _logs.add(LogLevel.info, 'Disconnected');
   }
 
   Future<void> toggle(VpnConfig config) async {
-    if (isConnected || _status == VpnStatus.error) {
-      await disconnect();
-    } else {
-      await connect(config);
-    }
+    if (isConnected) await disconnect();
+    else await connect(config);
   }
 
   void _startTimer() {
