@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -76,6 +75,7 @@ class VpnService {
     }
   }
 
+  /// فقط security= (خالی) رو حذف کن
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -98,63 +98,14 @@ class VpnService {
         }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-
-        if (key == 'security' && (value.isEmpty || value == 'none')) {
-          continue;
-        }
-        if (value.isEmpty) continue;
+        // فقط اگه security= خالی بود حذف کن
+        if (key == 'security' && value.isEmpty) continue;
         newParams.add(pair);
       }
 
       return '$basePart?${newParams.join('&')}$fragment';
     } catch (_) {
       return uri;
-    }
-  }
-
-  String _cleanJsonConfig(String jsonStr) {
-    try {
-      final Map<String, dynamic> root =
-          jsonDecode(jsonStr) as Map<String, dynamic>;
-
-      void cleanSecurity(Map<String, dynamic> ss) {
-        final sec = ss['security'];
-        if (sec == null ||
-            sec == '' ||
-            sec == 'none' ||
-            sec == 'None') {
-          ss.remove('security');
-          ss.remove('tlsSettings');
-          ss.remove('realitySettings');
-          if (ss['network'] == null || ss['network'] == '') {
-            ss['network'] = 'tcp';
-          }
-        }
-      }
-
-      final inbounds = root['inbounds'];
-      if (inbounds is List) {
-        for (final ib in inbounds) {
-          if (ib is Map<String, dynamic>) {
-            final ss = ib['streamSettings'];
-            if (ss is Map<String, dynamic>) cleanSecurity(ss);
-          }
-        }
-      }
-
-      final outbounds = root['outbounds'];
-      if (outbounds is List) {
-        for (final ob in outbounds) {
-          if (ob is Map<String, dynamic>) {
-            final ss = ob['streamSettings'];
-            if (ss is Map<String, dynamic>) cleanSecurity(ss);
-          }
-        }
-      }
-
-      return jsonEncode(root);
-    } catch (_) {
-      return jsonStr;
     }
   }
 
@@ -178,11 +129,8 @@ class VpnService {
       }
 
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-      String jsonConfig = parsedUrl.getFullConfiguration();
+      final String jsonConfig = parsedUrl.getFullConfiguration();
       await _logs.add(LogLevel.info, 'Parsed config OK');
-
-      jsonConfig = _cleanJsonConfig(jsonConfig);
-      await _logs.add(LogLevel.info, 'JSON cleaned ✅');
 
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
