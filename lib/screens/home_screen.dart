@@ -61,7 +61,7 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             children: [
               const SizedBox(height: 8),
-              const _StatusChip(),
+              _StatusChip(),  // ⭐ بدون const
               const SizedBox(height: 8),
               const Expanded(
                 flex: 5,
@@ -92,7 +92,7 @@ class HomeScreen extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════
-// Status Chip
+// Status Chip — استفاده از if-else به جای switch
 // ═══════════════════════════════════════════════
 class _StatusChip extends StatelessWidget {
   const _StatusChip();
@@ -101,29 +101,25 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final s = app.status;
-    late Color color;
-    late String text;
 
-    switch (s) {
-      case VpnStatus.connected:
-        color = C.success;
-        text = 'CONNECTED';
-        break;
-      case VpnStatus.connecting:
-        color = C.warning;
-        text = 'CONNECTING...';
-        break;
-      case VpnStatus.disconnecting:
-        color = C.warning;
-        text = 'DISCONNECTING...';
-        break;
-      case VpnStatus.error:
-        color = C.danger;
-        text = 'ERROR';
-        break;
-      default:
-        color = C.danger;
-        text = 'DISCONNECTED';
+    Color color;
+    String text;
+
+    if (s == VpnStatus.connected) {
+      color = C.success;
+      text = 'CONNECTED';
+    } else if (s == VpnStatus.connecting) {
+      color = C.warning;
+      text = 'CONNECTING...';
+    } else if (s == VpnStatus.disconnecting) {
+      color = C.warning;
+      text = 'DISCONNECTING...';
+    } else if (s == VpnStatus.error) {
+      color = C.danger;
+      text = 'ERROR';
+    } else {
+      color = C.danger;
+      text = 'DISCONNECTED';
     }
 
     return Container(
