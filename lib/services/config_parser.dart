@@ -14,11 +14,15 @@ class ConfigParser {
     return null;
   }
 
-  /// ⭐ چک اعتبار — پورت ۸۰ الان ساپورت می‌شه
+  /// ⭐ اعتبارسنجی — پورت ۸۰ ساپورت می‌شه
   static bool isValidConfig(VpnConfig config) {
     if (config.port <= 0 || config.port > 65535) return false;
     if (config.host.isEmpty) return false;
     if (config.rawUri.isEmpty) return false;
+
+    // ⭐ host باید معتبر باشه (بدون نقطه اضافی)
+    if (config.host.endsWith('.')) return false;
+
     return true;
   }
 
@@ -36,31 +40,33 @@ class ConfigParser {
     final at = decoded.lastIndexOf('@');
     final hostPort = decoded.substring(at + 1);
     final p = hostPort.split(':');
+    final host = _cleanHost(p[0]);
     return VpnConfig(
-      id: 'ss_${i}_${p[0].hashCode}',
+      id: 'ss_${i}_${host.hashCode}',
       name: 'PARSAVIP',
       protocol: VpnProtocol.ss,
       rawUri: uri,
-      host: p[0],
+      host: host,
       port: int.tryParse(p.length > 1 ? p[1].split('/').first : '443') ?? 443,
     );
   }
 
   static VpnConfig _vless(String uri, int i) {
     final u = Uri.parse(uri);
+    final host = _cleanHost(u.host);
     return VpnConfig(
-      id: 'vless_${i}_${u.host.hashCode}',
+      id: 'vless_${i}_${host.hashCode}',
       name: 'PARSAVIP',
       protocol: VpnProtocol.vless,
       rawUri: uri,
-      host: u.host,
+      host: host,
       port: u.port == 0 ? 443 : u.port,
     );
   }
 
   static VpnConfig _vmess(String uri, int i) {
     final j = jsonDecode(_b64(uri.substring(8))) as Map<String, dynamic>;
-    final host = (j['add'] ?? '').toString();
+    final host = _cleanHost((j['add'] ?? '').toString());
     return VpnConfig(
       id: 'vmess_${i}_${host.hashCode}',
       name: 'PARSAVIP',
@@ -73,14 +79,24 @@ class ConfigParser {
 
   static VpnConfig _trojan(String uri, int i) {
     final u = Uri.parse(uri);
+    final host = _cleanHost(u.host);
     return VpnConfig(
-      id: 'trojan_${i}_${u.host.hashCode}',
+      id: 'trojan_${i}_${host.hashCode}',
       name: 'PARSAVIP',
       protocol: VpnProtocol.trojan,
       rawUri: uri,
-      host: u.host,
+      host: host,
       port: u.port == 0 ? 443 : u.port,
     );
+  }
+
+  /// ⭐ حذف نقطه اضافی از انتهای host
+  static String _cleanHost(String host) {
+    var h = host.trim();
+    while (h.endsWith('.')) {
+      h = h.substring(0, h.length - 1);
+    }
+    return h;
   }
 
   static String _b64(String s) {
