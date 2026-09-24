@@ -133,12 +133,11 @@ class VpnService {
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
+      // ⭐ فقط androidDnsPolicy — بدون bypassSubnets
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
         proxyOnly: false,
-        // ⭐⭐ تنظیمات حیاتی برای رد شدن ترافیک
-        bypassSubnets: const ['0.0.0.0/0', '::/0'],
         androidDnsPolicy: AndroidDnsPolicy.proxy,
       );
 
