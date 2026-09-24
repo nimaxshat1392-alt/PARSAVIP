@@ -1,26 +1,50 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
-/// موتور پینگ Xray — دقیقاً همون چیزی که v2rayNG استفاده می‌کنه
-/// متد: Libv2ray.measureOutboundDelay (native Go)
-/// wrapper: getServerDelay
+/// ═══════════════════════════════════════════════════════════
+/// موتور پینگ Xray — مثل v2rayNG
+/// ═══════════════════════════════════════════════════════════
+///
+/// ویژگی‌ها:
+/// - Xray ping (getServerDelay) + TCP fallback
+/// - رد کردن پینگ‌های جعلی (< 15ms)
+/// - تلاش مجدد در صورت خطا
+/// - Timeout سختگیرانه
+/// - DNS cache
+/// - Concurrency محدود برای پایداری
 class PingService {
   PingService._();
 
   static const int offlineThreshold = 9999;
-  static const int maxValidPing = 15000;
+  static const int maxValidPing = 20000;
+  static const int minValidPing = 15; // کمتر از این = جعلی
+
   static const String testUrl = 'https://www.google.com/generate_204';
-  static const Duration pingTimeout = Duration(seconds: 15);
+  static const Duration xrayTimeout = Duration(seconds: 10);
+  static const Duration tcpTimeout = Duration(seconds: 4);
+  static const Duration dnsTimeout = Duration(seconds: 3);
+  static const Duration retryDelay = Duration(milliseconds: 300);
+  static const int maxAttempts = 2;
 
   static FlutterVless? _vless;
   static bool _initialized = false;
   static bool _cancelled = false;
+  static final Map<String, List<InternetAddress>> _dnsCache = {};
+
+  // ═══════════════════════════════════════════════════════════
+  // Public API
+  // ═══════════════════════════════════════════════════════════
 
   static void cancel() => _cancelled = true;
-  static void reset() => _cancelled = false;
+  static void reset() {
+    _cancelled = false;
+  }
+  static void clearDnsCache() => _dnsCache.clear();
 
-  /// ⭐ مقداردهی Xray core
+  /// مقداردهی Xray core
   static Future<void> initialize() async {
     if (_initialized) return;
     _vless ??= FlutterVless(onStatusChanged: (_) {});
@@ -35,40 +59,23 @@ class PingService {
     } catch (_) {}
   }
 
-  /// ⭐ پینگ Xray — دقیقاً مثل v2rayNG
-  /// هر عددی که native برگردونه رو قبول می‌کنه
+  /// ⭐ پینگ یک سرور
   static Future<int?> pingOne(VpnConfig config) async {
     if (_cancelled) return null;
     if (config.host.isEmpty || config.port <= 0) return null;
 
-    try {
-      if (!_initialized) await initialize();
-      if (_vless == null) return null;
+    // ⭐ اول Xray ping
+    final xrayPing = await _tryXrayPing(config);
+    if (xrayPing != null) return xrayPing;
 
-      final cleanUri = _sanitizeUri(config.rawUri);
-      final FlutterVlessURL parsed = FlutterVless.parseFromURL(cleanUri);
-      final String jsonConfig = parsed.getFullConfiguration();
+    if (_cancelled) return null;
 
-      // ⭐ فقط یه بار — دقیقاً مثل v2rayNG
-      final int delay = await _vless!
-          .getServerDelay(config: jsonConfig, url: testUrl)
-          .timeout(pingTimeout, onTimeout: () => -1);
-
-      if (_cancelled) return null;
-
-      // قبول هر عددی که منطقی باشه
-      // v2rayNG هم همین کار رو می‌کنه — اگه عدد 2ms برگرده، قبولش می‌کنه
-      if (delay <= 0) return null;
-      if (delay >= offlineThreshold) return null;
-      if (delay > maxValidPing) return null;
-
-      return delay;
-    } catch (_) {
-      return null;
-    }
+    // ⭐ اگه Xray fail شد → TCP ping
+    final tcpPing = await _tryTcpPing(config);
+    return tcpPing;
   }
 
-  /// پینگ همه — دقیقاً با concurrency 4 مثل v2rayNG
+  /// پینگ همه سرورها
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
     int concurrency = 4,
@@ -123,9 +130,130 @@ class PingService {
           (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
     final top = sorted.first;
     final ping = top.ping ?? offlineThreshold;
-    if (ping >= offlineThreshold || ping > maxValidPing) return null;
+    if (ping >= offlineThreshold) return null;
+    if (ping > maxValidPing) return null;
     return top;
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // Internal — Xray Ping
+  // ═══════════════════════════════════════════════════════════
+
+  /// ⭐ پینگ Xray با retry
+  static Future<int?> _tryXrayPing(VpnConfig config) async {
+    if (_vless == null) return null;
+
+    String? jsonConfig;
+
+    // آماده‌سازی config
+    try {
+      final cleanUri = _sanitizeUri(config.rawUri);
+      final parsed = FlutterVless.parseFromURL(cleanUri);
+      jsonConfig = parsed.getFullConfiguration();
+    } catch (_) {
+      return null;
+    }
+
+    // تلاش چند باره
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      if (_cancelled) return null;
+
+      try {
+        final int delay = await _vless!
+            .getServerDelay(
+              config: jsonConfig,
+              url: testUrl,
+            )
+            .timeout(
+              xrayTimeout,
+              onTimeout: () => -1,
+            );
+
+        if (_cancelled) return null;
+
+        // ⭐ اعتبارسنجی: جعلی رد
+        if (delay < minValidPing) {
+          // عدد جعلی — باز تلاش کن
+          if (attempt < maxAttempts - 1) {
+            await Future.delayed(retryDelay);
+            continue;
+          }
+          return null;
+        }
+
+        if (delay > maxValidPing) {
+          if (attempt < maxAttempts - 1) {
+            await Future.delayed(retryDelay);
+            continue;
+          }
+          return null;
+        }
+
+        // ⭐ پینگ معتبر
+        return delay;
+      } catch (_) {
+        if (attempt < maxAttempts - 1) {
+          await Future.delayed(retryDelay);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Internal — TCP Ping (fallback)
+  // ═══════════════════════════════════════════════════════════
+
+  /// ⭐ TCP ping با DNS cache
+  static Future<int?> _tryTcpPing(VpnConfig config) async {
+    if (_cancelled) return null;
+
+    try {
+      // DNS resolve
+      final addresses = await _resolveDns(config.host);
+      if (addresses == null || addresses.isEmpty) return null;
+
+      // TCP connect
+      final sw = Stopwatch()..start();
+      final socket = await Socket.connect(
+        addresses.first.address,
+        config.port,
+        timeout: tcpTimeout,
+      );
+      socket.destroy();
+      sw.stop();
+
+      final ms = sw.elapsedMilliseconds;
+
+      // ⭐ اعتبارسنجی
+      if (ms < minValidPing) return null;
+      if (ms > maxValidPing) return null;
+
+      return ms;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// DNS resolve با cache
+  static Future<List<InternetAddress>?> _resolveDns(String host) async {
+    final cached = _dnsCache[host];
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    try {
+      final addrs = await InternetAddress.lookup(host).timeout(dnsTimeout);
+      if (addrs.isNotEmpty) {
+        _dnsCache[host] = addrs;
+        return addrs;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // URI Sanitizer
+  // ═══════════════════════════════════════════════════════════
 
   static String _sanitizeUri(String uri) {
     try {
