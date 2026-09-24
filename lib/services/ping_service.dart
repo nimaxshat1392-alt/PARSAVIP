@@ -2,23 +2,16 @@ import 'dart:async';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
-/// موتور پینگ Xray — معادل Real Ping در v2rayNG
-///
-/// استراتژی:
-/// - از getServerDelay برای اندازه‌گیری تأخیر واقعی از طریق پروکسی استفاده می‌کند.
-/// - مقادیر کمتر از 20ms را به عنوان نتیجه جعلی رد می‌کند.
-/// - تا 3 بار برای دریافت یک نتیجه معتبر تلاش می‌کند.
+/// موتور پینگ Xray — دقیقاً همون چیزی که v2rayNG استفاده می‌کنه
+/// متد: Libv2ray.measureOutboundDelay (native Go)
+/// wrapper: getServerDelay
 class PingService {
   PingService._();
 
   static const int offlineThreshold = 9999;
   static const int maxValidPing = 15000;
-  static const int minValidPing = 20; // مقدار کمتر از این = جعلی
-
   static const String testUrl = 'https://www.google.com/generate_204';
   static const Duration pingTimeout = Duration(seconds: 15);
-  static const int maxRetries = 3;
-  static const Duration retryDelay = Duration(milliseconds: 500);
 
   static FlutterVless? _vless;
   static bool _initialized = false;
@@ -27,7 +20,7 @@ class PingService {
   static void cancel() => _cancelled = true;
   static void reset() => _cancelled = false;
 
-  /// مقداردهی اولیه هسته Xray
+  /// ⭐ مقداردهی Xray core
   static Future<void> initialize() async {
     if (_initialized) return;
     _vless ??= FlutterVless(onStatusChanged: (_) {});
@@ -42,9 +35,11 @@ class PingService {
     } catch (_) {}
   }
 
-  /// پینگ واقعی Xray برای یک سرور
+  /// ⭐ پینگ Xray — دقیقاً مثل v2rayNG
+  /// هر عددی که native برگردونه رو قبول می‌کنه
   static Future<int?> pingOne(VpnConfig config) async {
-    if (_cancelled || config.host.isEmpty || config.port <= 0) return null;
+    if (_cancelled) return null;
+    if (config.host.isEmpty || config.port <= 0) return null;
 
     try {
       if (!_initialized) await initialize();
@@ -54,40 +49,29 @@ class PingService {
       final FlutterVlessURL parsed = FlutterVless.parseFromURL(cleanUri);
       final String jsonConfig = parsed.getFullConfiguration();
 
-      for (var attempt = 0; attempt < maxRetries; attempt++) {
-        if (_cancelled) return null;
+      // ⭐ فقط یه بار — دقیقاً مثل v2rayNG
+      final int delay = await _vless!
+          .getServerDelay(config: jsonConfig, url: testUrl)
+          .timeout(pingTimeout, onTimeout: () => -1);
 
-        try {
-          final int delay = await _vless!
-              .getServerDelay(config: jsonConfig, url: testUrl)
-              .timeout(pingTimeout, onTimeout: () => -1);
+      if (_cancelled) return null;
 
-          if (_cancelled) return null;
+      // قبول هر عددی که منطقی باشه
+      // v2rayNG هم همین کار رو می‌کنه — اگه عدد 2ms برگرده، قبولش می‌کنه
+      if (delay <= 0) return null;
+      if (delay >= offlineThreshold) return null;
+      if (delay > maxValidPing) return null;
 
-          // اعتبارسنجی نتیجه
-          if (delay >= minValidPing && delay <= maxValidPing) {
-            return delay;
-          }
-
-          if (attempt < maxRetries - 1) {
-            await Future.delayed(retryDelay);
-          }
-        } catch (_) {
-          if (attempt < maxRetries - 1) {
-            await Future.delayed(retryDelay);
-          }
-        }
-      }
-      return null; // همه تلاش‌ها ناموفق
+      return delay;
     } catch (_) {
       return null;
     }
   }
 
-  /// پینگ همه سرورها به صورت موازی
+  /// پینگ همه — دقیقاً با concurrency 4 مثل v2rayNG
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
-    int concurrency = 3,
+    int concurrency = 4,
     void Function(int done, int total)? onProgress,
   }) async {
     if (configs.isEmpty) return [];
@@ -132,7 +116,6 @@ class PingService {
     return results;
   }
 
-  /// انتخاب بهترین سرور بر اساس کمترین پینگ
   static VpnConfig? best(List<VpnConfig> configs) {
     if (configs.isEmpty) return null;
     final sorted = [...configs]
@@ -144,7 +127,6 @@ class PingService {
     return top;
   }
 
-  /// پاکسازی URI برای جلوگیری از خطا در پارس کردن
   static String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -167,9 +149,7 @@ class PingService {
         }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        if (key == 'security' && (value.isEmpty || value == 'none')) {
-          continue;
-        }
+        if (key == 'security' && (value.isEmpty || value == 'none')) continue;
         if (value.isEmpty) continue;
         newParams.add(pair);
       }
