@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 import 'log_service.dart';
@@ -76,7 +75,7 @@ class VpnService {
     }
   }
 
-  /// پاکسازی URI — حذف security=none، fp بدون TLS، پارامترهای خالی
+  /// پاکسازی URI — فقط `security=none` حذف
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -89,108 +88,27 @@ class VpnService {
       String basePart = mainPart.substring(0, qIndex);
       String queryPart = mainPart.substring(qIndex + 1);
 
-      final params = <String, String>{};
+      final newParams = <String>[];
       for (final pair in queryPart.split('&')) {
         if (pair.isEmpty) continue;
         final eqIndex = pair.indexOf('=');
-        if (eqIndex < 0) continue;
+        if (eqIndex < 0) {
+          newParams.add(pair);
+          continue;
+        }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
+
+        if (key == 'security' && (value.isEmpty || value == 'none')) {
+          continue;
+        }
         if (value.isEmpty) continue;
-        params[key] = value;
+        newParams.add(pair);
       }
 
-      // security=none یا خالی → حذف کامل
-      final sec = params['security'];
-      if (sec == null || sec.isEmpty || sec == 'none') {
-        params.remove('security');
-        params.remove('fp');
-        params.remove('sni');
-        params.remove('alpn');
-        params.remove('allowInsecure');
-        params.remove('pbk');
-        params.remove('sid');
-        params.remove('spx');
-      }
-
-      // حذف پارامترهای خالی
-      params.removeWhere((k, v) => v.isEmpty);
-
-      final rebuilt = params.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('&');
-
-      return '$basePart?$rebuilt$fragment';
+      return '$basePart?${newParams.join('&')}$fragment';
     } catch (_) {
       return uri;
-    }
-  }
-
-  /// تزریق DNS + routing
-  String _enhanceConfig(String jsonStr) {
-    try {
-      final Map<String, dynamic> root =
-          jsonDecode(jsonStr) as Map<String, dynamic>;
-
-      // ۱. پاکسازی security:none
-      void cleanSecurity(Map<String, dynamic> ss) {
-        final sec = ss['security'];
-        if (sec == null || sec == '' || sec == 'none') {
-          ss.remove('security');
-          ss.remove('tlsSettings');
-          ss.remove('realitySettings');
-          if (ss['network'] == null || ss['network'] == '') {
-            ss['network'] = 'tcp';
-          }
-        }
-      }
-
-      final inbounds = root['inbounds'];
-      if (inbounds is List) {
-        for (final ib in inbounds) {
-          if (ib is Map<String, dynamic>) {
-            final ss = ib['streamSettings'];
-            if (ss is Map<String, dynamic>) cleanSecurity(ss);
-          }
-        }
-      }
-
-      final outbounds = root['outbounds'];
-      if (outbounds is List) {
-        for (final ob in outbounds) {
-          if (ob is Map<String, dynamic>) {
-            final ss = ob['streamSettings'];
-            if (ss is Map<String, dynamic>) cleanSecurity(ss);
-          }
-        }
-      }
-
-      // ۲. تزریق DNS
-      root['dns'] = {
-        'servers': [
-          {'address': '1.1.1.1', 'domains': []},
-          {'address': '8.8.8.8', 'domains': []},
-        ],
-        'queryStrategy': 'UseIPv4',
-        'disableFallback': false,
-      };
-
-      // ۳. تزریق routing
-      root['routing'] = {
-        'domainStrategy': 'IPIfNonMatch',
-        'rules': [
-          {'type': 'field', 'outboundTag': 'direct', 'port': '53'},
-          {
-            'type': 'field',
-            'outboundTag': 'direct',
-            'ip': ['geoip:private']
-          },
-        ],
-      };
-
-      return jsonEncode(root);
-    } catch (e) {
-      return jsonStr;
     }
   }
 
@@ -208,21 +126,23 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ۱. پاکسازی
+      // ۱. پاکسازی حداقلی
       final cleanUri = _sanitizeUri(config.rawUri);
 
       // ۲. پارس
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-      String jsonConfig = parsedUrl.getFullConfiguration();
+      final String jsonConfig = parsedUrl.getFullConfiguration();
+      await _logs.add(LogLevel.info, 'Parsed config OK');
 
-      // ۳. بهبود
-      jsonConfig = _enhanceConfig(jsonConfig);
+      // ⭐ مهم: config رو دست نزن! بذار flutter_vless خودش مدیریت کنه
+      // این تنها راهیه که TUN و tun2socks به هم وصل می‌شن
 
-      // ۴. مجوز
+      // ۳. مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
+      await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ۵. شروع
+      // ۴. شروع
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
