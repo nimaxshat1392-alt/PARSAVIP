@@ -29,7 +29,6 @@ class AppState extends ChangeNotifier {
     configs = await storage.loadConfigs();
 
     if (configs.isEmpty) {
-      // بارگذاری پیش‌فرض
       final parsed = <VpnConfig>[];
       final seen = <String>{};
       for (var i = 0; i < defaultConfigUris.length; i++) {
@@ -44,11 +43,10 @@ class AppState extends ChangeNotifier {
       configs = parsed;
       await storage.saveConfigs(configs);
     } else {
-      // ⭐ فیلتر کانفیگ‌های نامعتبر
+      // فیلتر کانفیگ‌های نامعتبر
       final beforeCount = configs.length;
       configs = configs.where((c) => ConfigParser.isValidConfig(c)).toList();
-      final afterCount = configs.length;
-      if (beforeCount != afterCount) {
+      if (beforeCount != configs.length) {
         await storage.saveConfigs(configs);
       }
     }
@@ -105,24 +103,22 @@ class AppState extends ChangeNotifier {
     try {
       configs = await ping.PingService.pingAll(
         configs,
-        concurrency: 12,
-        onProgress: (p) {
-          pingProgress = p.percent;
+        concurrency: 4,
+        onProgress: (done, total) {
+          pingProgress = total == 0 ? 0 : done / total;
           notifyListeners();
         },
       );
 
       await storage.saveConfigs(configs);
 
-      // آمار نهایی
-      final stats = ping.PingService.getGlobalStats();
-      final online = stats['successCount'] ?? 0;
-      final offline = stats['failureCount'] ?? 0;
-      final avgPing = stats['avgPing'] ?? 0;
+      final online = configs
+          .where((c) => (c.ping ?? 9999) < 9999)
+          .length;
 
       await logs.add(
         LogLevel.success,
-        'Ping complete: $online online, $offline offline, avg=${avgPing}ms',
+        'Ping complete: $online online, ${configs.length - online} offline',
       );
     } catch (e) {
       await logs.add(LogLevel.error, 'Ping failed: $e');
@@ -187,7 +183,6 @@ class AppState extends ChangeNotifier {
       return false;
     }
 
-    // اعتبارسنجی — همه پورت‌ها ساپورت می‌شن
     if (!ConfigParser.isValidConfig(c)) {
       await logs.add(
         LogLevel.warning,
@@ -196,7 +191,6 @@ class AppState extends ChangeNotifier {
       return false;
     }
 
-    // چک تکراری
     if (configs.any((x) => x.host == c.host && x.port == c.port)) {
       await logs.add(LogLevel.warning, 'Duplicate config skipped');
       return false;
