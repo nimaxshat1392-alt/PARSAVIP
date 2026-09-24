@@ -1,141 +1,144 @@
 import 'dart:async';
-import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
+import 'package:flutter_vless/flutter_vless.dart';
 import '../models/vpn_config.dart';
 
 /// ═══════════════════════════════════════════════════════════
-/// موتور پینگ پیشرفته — مثل v2rayNG / NekoBox / Clash
+/// موتور پینگ Xray — دقیقاً مثل v2rayNG
 /// ═══════════════════════════════════════════════════════════
 ///
-/// ویژگی‌ها:
-/// - DNS Cache با TTL (سرعت ۱۰x)
-/// - Multi-sample (۳ نمونه) + Median (دقیق‌تر از میانگین)
-/// - Jitter calculation (نوسان پینگ)
-/// - Packet loss detection
-/// - Retry با exponential backoff
-/// - IP family preference (IPv4/IPv6)
-/// - Connection pooling
-/// - Cancellation support
-/// - Progress streaming
-/// - Detailed statistics
+/// چطوری کار می‌کنه:
+/// ۱. یه Xray موقت با کانفیگ سرور بالا میاد
+/// ۲. یه HTTP request از پروکسی به google/generate_204 زده می‌شه
+/// ۳. زمان round-trip اندازه‌گیری می‌شه
+/// ۴. Xray بسته می‌شه
 ///
-/// نتیجه: دقیقاً مثل کلاینت‌های حرفه‌ای
+/// نتیجه: پینگ واقعی از طریق سرور، نه فقط TCP به سرور
 class PingService {
   PingService._();
 
   // ═══════════════════════════════════════════════════════════
-  // تنظیمات
+  // Config
   // ═══════════════════════════════════════════════════════════
 
-  /// پینگ بیشتر از این = آفلاین
   static const int offlineThreshold = 9999;
+  static const int maxValidPing = 15000;
+  static const String testUrl = 'https://www.google.com/generate_204';
 
-  /// پینگ بیشتر از این = خیلی ضعیف (باید رد شه)
-  static const int maxValidPing = 8000;
+  /// زمان انتظار برای هر Xray ping
+  static const Duration xrayPingTimeout = Duration(seconds: 12);
 
-  /// تعداد نمونه برای هر سرور
-  static const int sampleCount = 3;
-
-  /// Timeout هر TCP connect
+  /// زمان انتظار برای TCP fallback
   static const Duration tcpTimeout = Duration(seconds: 4);
 
-  /// Timeout DNS resolve
-  static const Duration dnsTimeout = Duration(seconds: 3);
+  /// تعداد نمونه
+  static const int sampleCount = 2;
 
-  /// TTL کش DNS (چند دقیقه)
-  static const Duration dnsCacheTtl = Duration(minutes: 5);
-
-  /// حداکثر retry برای DNS
-  static const int maxDnsRetries = 2;
+  /// فاصله بین نمونه‌ها
+  static const Duration sampleDelay = Duration(milliseconds: 200);
 
   // ═══════════════════════════════════════════════════════════
   // State
   // ═══════════════════════════════════════════════════════════
 
+  static FlutterVless? _vless;
+  static bool _initialized = false;
   static bool _cancelled = false;
-  static final _DnsCache _dnsCache = _DnsCache();
-  static final _PingStats _globalStats = _PingStats();
+  static final _PingStats _stats = _PingStats();
 
   // ═══════════════════════════════════════════════════════════
   // Public API
   // ═══════════════════════════════════════════════════════════
 
-  /// لغو همه عملیات جاری
   static void cancel() {
     _cancelled = true;
   }
 
-  /// ریست کردن حالت
   static void reset() {
     _cancelled = false;
+    _stats.reset();
   }
 
-  /// پاک کردن کش DNS
-  static void clearDnsCache() {
-    _dnsCache.clear();
+  static Map<String, dynamic> getGlobalStats() => _stats.toJson();
+
+  /// ⭐ مقداردهی Xray core (فقط یک بار)
+  static Future<void> initialize() async {
+    if (_initialized) return;
+    _vless ??= FlutterVless(onStatusChanged: (_) {});
+    try {
+      await _vless!.initializeVless(
+        notificationIconResourceType: 'mipmap',
+        notificationIconResourceName: 'ic_launcher',
+      );
+      _initialized = true;
+    } catch (_) {}
   }
 
-  /// آمار کلی
-  static Map<String, dynamic> getGlobalStats() {
-    return _globalStats.toJson();
-  }
-
-  /// پینگ یک سرور (با تمام ویژگی‌ها)
+  /// ⭐ پینگ Xray یک سرور
+  /// این همون کاریه که v2rayNG می‌کنه
   static Future<PingResult> pingDetailed(VpnConfig config) async {
     if (_cancelled) {
       return PingResult(
         config: config,
         ping: null,
-        jitter: null,
-        packetLoss: 1.0,
         samples: const [],
         status: PingStatus.cancelled,
       );
     }
 
-    // اعتبارسنجی
     if (config.host.isEmpty || config.port <= 0) {
       return PingResult(
         config: config,
         ping: null,
-        jitter: null,
-        packetLoss: 1.0,
         samples: const [],
         status: PingStatus.invalid,
       );
     }
 
-    // نمونه‌گیری
+    try {
+      if (!_initialized) await initialize();
+    } catch (_) {
+      return PingResult(
+        config: config,
+        ping: null,
+        samples: const [],
+        status: PingStatus.invalid,
+      );
+    }
+
     final samples = <int>[];
-    int attempts = 0;
 
     for (var i = 0; i < sampleCount; i++) {
       if (_cancelled) break;
 
-      final ms = await _singlePing(config);
-      attempts++;
+      final ms = await _xrayPing(config);
 
-      if (ms != null && ms <= maxValidPing) {
+      if (ms != null && ms > 0 && ms <= maxValidPing) {
         samples.add(ms);
       }
 
-      // اگه اولین تلاش fail شد، دیگه تلاش نکن
+      // اگه اولین تلاش fail شد، ادامه نده
       if (i == 0 && ms == null) break;
 
-      // کوچک تاخیر بین نمونه‌ها
       if (i < sampleCount - 1) {
-        await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(sampleDelay);
+      }
+    }
+
+    // اگه Xray fail داد، TCP fallback
+    if (samples.isEmpty) {
+      final tcpMs = await _tcpPing(config);
+      if (tcpMs != null && tcpMs > 0 && tcpMs <= maxValidPing) {
+        samples.add(tcpMs);
       }
     }
 
     if (samples.isEmpty) {
-      _globalStats.recordFailure();
+      _stats.recordFailure();
       return PingResult(
         config: config,
         ping: null,
-        jitter: null,
-        packetLoss: 1.0,
         samples: const [],
         status: PingStatus.offline,
       );
@@ -145,74 +148,55 @@ class PingService {
     final sorted = [...samples]..sort();
     final median = sorted[sorted.length ~/ 2];
 
-    // Jitter (نوسان)
-    final jitter = samples.length > 1
-        ? _calculateJitter(samples)
-        : 0;
-
-    // Packet loss (درصد)
-    final packetLoss = (sampleCount - samples.length) / sampleCount;
-
-    _globalStats.recordSuccess(median);
+    _stats.recordSuccess(median);
 
     return PingResult(
       config: config,
       ping: median,
-      jitter: jitter,
-      packetLoss: packetLoss,
       samples: samples,
       status: PingStatus.online,
     );
   }
 
-  /// پینگ ساده (فقط عدد)
+  /// پینگ ساده
   static Future<int?> pingOne(VpnConfig config) async {
     final result = await pingDetailed(config);
     return result.ping;
   }
 
-  /// پینگ همه سرورها (موازی، با progress)
+  /// پینگ همه سرورها — موازی
   static Future<List<VpnConfig>> pingAll(
     List<VpnConfig> configs, {
-    int concurrency = 12,
+    int concurrency = 3,
     void Function(PingProgress)? onProgress,
   }) async {
     if (configs.isEmpty) return [];
 
     reset();
-    _globalStats.reset();
+    await initialize();
 
     final results = List<VpnConfig>.from(configs);
     final total = configs.length;
-    final queue = Queue<int>.from(List.generate(total, (i) => i));
-    final lock = _Lock();
+    final startTime = DateTime.now();
 
+    int nextIndex = 0;
     int completed = 0;
     int online = 0;
     int offline = 0;
-    final startTime = DateTime.now();
 
     Future<void> worker() async {
       while (true) {
         if (_cancelled) return;
 
-        int index;
-        await lock.synchronized(() {
-          if (queue.isEmpty) {
-            index = -1;
-          } else {
-            index = queue.removeFirst();
-          }
-        });
+        final int currentIndex = nextIndex;
+        if (currentIndex >= total) return;
+        nextIndex = currentIndex + 1;
 
-        if (index == -1) return;
-
-        final config = configs[index];
+        final config = configs[currentIndex];
         final result = await pingDetailed(config);
 
-        // به‌روزرسانی
         if (result.status == PingStatus.online && result.ping != null) {
-          results[index] = VpnConfig(
+          results[currentIndex] = VpnConfig(
             id: config.id,
             name: config.name,
             protocol: config.protocol,
@@ -223,7 +207,7 @@ class PingService {
           );
           online++;
         } else {
-          results[index] = VpnConfig(
+          results[currentIndex] = VpnConfig(
             id: config.id,
             name: config.name,
             protocol: config.protocol,
@@ -252,14 +236,12 @@ class PingService {
     final wc = concurrency < total ? concurrency : total;
     await Future.wait(List.generate(wc, (_) => worker()));
 
-    // مرتب‌سازی
     results.sort((a, b) =>
         (a.ping ?? offlineThreshold).compareTo(b.ping ?? offlineThreshold));
 
     return results;
   }
 
-  /// پیدا کردن بهترین سرور
   static VpnConfig? best(List<VpnConfig> configs) {
     if (configs.isEmpty) return null;
 
@@ -277,60 +259,110 @@ class PingService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // Internal
+  // Internal — Xray Ping
   // ═══════════════════════════════════════════════════════════
 
-  /// پینگ یک بار — با DNS cache
-  static Future<int?> _singlePing(VpnConfig config) async {
-    // Resolve DNS با retry
-    final addresses = await _resolveWithRetry(config.host);
-    if (addresses == null || addresses.isEmpty) return null;
+  /// ⭐ پینگ واقعی از طریق Xray core
+  /// دقیقاً همون چیزی که v2rayNG استفاده می‌کنه
+  static Future<int?> _xrayPing(VpnConfig config) async {
+    if (_cancelled) return null;
+    if (_vless == null) return null;
 
-    // تلاش روی همه IP های resolve شده
-    for (final addr in addresses) {
-      if (_cancelled) return null;
+    try {
+      // ۱. پاکسازی URI
+      final cleanUri = _sanitizeUri(config.rawUri);
 
-      final result = await _tcpConnect(addr.address, config.port);
-      if (result != null) return result;
-    }
-
-    return null;
-  }
-
-  /// Resolve DNS با retry
-  static Future<List<InternetAddress>?> _resolveWithRetry(String host) async {
-    // چک کش
-    final cached = _dnsCache.get(host);
-    if (cached != null) return cached;
-
-    // تلاش با retry
-    for (var i = 0; i <= maxDnsRetries; i++) {
-      if (_cancelled) return null;
-
+      // ۲. پارس به URL object
+      final FlutterVlessURL parsed;
       try {
-        final addrs = await InternetAddress.lookup(host).timeout(dnsTimeout);
-        if (addrs.isNotEmpty) {
-          _dnsCache.set(host, addrs);
-          return addrs;
-        }
+        parsed = FlutterVless.parseFromURL(cleanUri);
       } catch (_) {
-        if (i < maxDnsRetries) {
-          // Exponential backoff
-          await Future.delayed(Duration(milliseconds: 100 * (i + 1)));
-        }
+        return null;
       }
-    }
 
-    return null;
+      // ۳. تبدیل به JSON config
+      final String jsonConfig;
+      try {
+        jsonConfig = parsed.getFullConfiguration();
+      } catch (_) {
+        return null;
+      }
+
+      // ۴. پینگ Xray با timeout
+      final int delay = await _vless!
+          .getServerDelay(
+            config: jsonConfig,
+            url: testUrl,
+          )
+          .timeout(xrayPingTimeout, onTimeout: () => -1);
+
+      if (_cancelled) return null;
+
+      if (delay < 0) return null;
+      if (delay >= offlineThreshold) return null;
+      if (delay > maxValidPing) return null;
+
+      return delay;
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// TCP connect
-  static Future<int?> _tcpConnect(String ip, int port) async {
+  /// پاکسازی URI — حذف پارامترهای مشکل‌دار
+  static String _sanitizeUri(String uri) {
+    try {
+      final hashIndex = uri.indexOf('#');
+      String mainPart = hashIndex >= 0 ? uri.substring(0, hashIndex) : uri;
+      String fragment = hashIndex >= 0 ? uri.substring(hashIndex) : '';
+
+      final qIndex = mainPart.indexOf('?');
+      if (qIndex < 0) return uri;
+
+      final basePart = mainPart.substring(0, qIndex);
+      final queryPart = mainPart.substring(qIndex + 1);
+
+      final newParams = <String>[];
+      for (final pair in queryPart.split('&')) {
+        if (pair.isEmpty) continue;
+
+        final eqIndex = pair.indexOf('=');
+        if (eqIndex < 0) {
+          newParams.add(pair);
+          continue;
+        }
+
+        final key = pair.substring(0, eqIndex);
+        final value = pair.substring(eqIndex + 1);
+
+        // حذف security=none یا security= خالی
+        if (key == 'security' && (value.isEmpty || value == 'none')) {
+          continue;
+        }
+
+        // حذف پارامترهای خالی
+        if (value.isEmpty) continue;
+
+        newParams.add(pair);
+      }
+
+      return '$basePart?${newParams.join('&')}$fragment';
+    } catch (_) {
+      return uri;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Fallback — TCP Ping (اگه Xray fail شد)
+  // ═══════════════════════════════════════════════════════════
+
+  static Future<int?> _tcpPing(VpnConfig config) async {
+    if (config.host.isEmpty || config.port <= 0) return null;
+
     final sw = Stopwatch()..start();
     try {
       final socket = await Socket.connect(
-        ip,
-        port,
+        config.host,
+        config.port,
         timeout: tcpTimeout,
       );
       socket.destroy();
@@ -340,37 +372,21 @@ class PingService {
       return null;
     }
   }
-
-  /// محاسبه Jitter (نوسان پینگ)
-  static int _calculateJitter(List<int> samples) {
-    if (samples.length < 2) return 0;
-
-    var sum = 0;
-    for (var i = 1; i < samples.length; i++) {
-      sum += (samples[i] - samples[i - 1]).abs();
-    }
-    return sum ~/ (samples.length - 1);
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
-// Helper Classes
+// Data Classes
 // ═══════════════════════════════════════════════════════════
 
-/// نتیجه پینگ با جزئیات
 class PingResult {
   final VpnConfig config;
   final int? ping;
-  final int? jitter;
-  final double packetLoss;
   final List<int> samples;
   final PingStatus status;
 
   PingResult({
     required this.config,
     required this.ping,
-    required this.jitter,
-    required this.packetLoss,
     required this.samples,
     required this.status,
   });
@@ -387,15 +403,8 @@ class PingResult {
   }
 }
 
-/// وضعیت پینگ
-enum PingStatus {
-  online,
-  offline,
-  cancelled,
-  invalid,
-}
+enum PingStatus { online, offline, cancelled, invalid }
 
-/// پیشرفت پینگ
 class PingProgress {
   final int completed;
   final int total;
@@ -425,51 +434,6 @@ class PingProgress {
   }
 }
 
-/// کش DNS با TTL
-class _DnsCache {
-  final Map<String, _CacheEntry> _cache = {};
-
-  List<InternetAddress>? get(String host) {
-    final entry = _cache[host];
-    if (entry == null) return null;
-
-    final age = DateTime.now().difference(entry.timestamp);
-    if (age > PingService.dnsCacheTtl) {
-      _cache.remove(host);
-      return null;
-    }
-
-    return entry.addresses;
-  }
-
-  void set(String host, List<InternetAddress> addresses) {
-    _cache[host] = _CacheEntry(
-      addresses: addresses,
-      timestamp: DateTime.now(),
-    );
-  }
-
-  void clear() => _cache.clear();
-}
-
-class _CacheEntry {
-  final List<InternetAddress> addresses;
-  final DateTime timestamp;
-
-  _CacheEntry({
-    required this.addresses,
-    required this.timestamp,
-  });
-}
-
-/// Lock برای sync
-class _Lock {
-  Future<void> synchronized(FutureOr<void> Function() action) async {
-    await action();
-  }
-}
-
-/// آمار کلی
 class _PingStats {
   int _successCount = 0;
   int _failureCount = 0;
@@ -497,7 +461,11 @@ class _PingStats {
         'avgPing': _pings.isEmpty
             ? 0
             : _pings.reduce((a, b) => a + b) ~/ _pings.length,
-        'minPing': _pings.isEmpty ? 0 : _pings.reduce(math.min),
-        'maxPing': _pings.isEmpty ? 0 : _pings.reduce(math.max),
+        'minPing': _pings.isEmpty
+            ? 0
+            : _pings.reduce((a, b) => a < b ? a : b),
+        'maxPing': _pings.isEmpty
+            ? 0
+            : _pings.reduce((a, b) => a > b ? a : b),
       };
 }
