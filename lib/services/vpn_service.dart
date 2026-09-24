@@ -97,7 +97,6 @@ class VpnService {
         }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-
         if (key == 'security' && (value.isEmpty || value == 'none')) {
           continue;
         }
@@ -125,21 +124,72 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
+      // پاکسازی URI
       final cleanUri = _sanitizeUri(config.rawUri);
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
       final String jsonConfig = parsedUrl.getFullConfiguration();
 
+      // درخواست مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ⭐ فقط androidDnsPolicy — بدون bypassSubnets
+      // ⭐ شروع تونل — فقط androidDnsPolicy (بدون bypassSubnets)
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
         proxyOnly: false,
         androidDnsPolicy: AndroidDnsPolicy.proxy,
       );
+
+      // ⭐ صبر کن Xray کامل بالا بیاد
+      await _logs.add(LogLevel.info, 'Waiting for Xray startup...');
+      await Future.delayed(const Duration(seconds: 3));
+
+      // ⭐ Health Check واقعی
+      bool trafficWorks = false;
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          final delay = await _vless
+              .getConnectedServerDelay(
+                url: 'https://www.google.com/generate_204',
+              )
+              .timeout(const Duration(seconds: 6), onTimeout: () => -1);
+
+          await _logs.add(LogLevel.info, 'Health check: $delay ms');
+
+          if (delay > 0 && delay < 15000) {
+            trafficWorks = true;
+            break;
+          }
+        } catch (e) {
+          await _logs.add(LogLevel.warning, 'Health attempt ${attempt + 1}: $e');
+        }
+
+        if (attempt < 2) {
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+
+      if (!trafficWorks) {
+        await _logs.add(
+          LogLevel.error,
+          'Connected but no traffic — trying restart',
+        );
+
+        // یه بار دیگه امتحان کن
+        try {
+          await _vless.stopVless();
+          await Future.delayed(const Duration(seconds: 1));
+          await _vless.startVless(
+            remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
+            config: jsonConfig,
+            proxyOnly: false,
+            androidDnsPolicy: AndroidDnsPolicy.proxy,
+          );
+          await Future.delayed(const Duration(seconds: 3));
+        } catch (_) {}
+      }
 
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
