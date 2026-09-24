@@ -76,7 +76,6 @@ class VpnService {
     }
   }
 
-  /// پاکسازی URI
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -99,9 +98,7 @@ class VpnService {
         }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        if (key == 'security' && (value.isEmpty || value == 'none')) {
-          continue;
-        }
+        if (key == 'security' && (value.isEmpty || value == 'none')) continue;
         if (value.isEmpty) continue;
         newParams.add(pair);
       }
@@ -112,32 +109,138 @@ class VpnService {
     }
   }
 
-  /// ⭐ پاکسازی JSON — جایگزینی null با مقادیر معتبر
-  /// این تابع مشکل Reality (spiderX=null) رو حل می‌کنه
-  String _fixJsonConfig(String jsonStr) {
+  /// ⭐ بهینه‌سازی کامل JSON — fix null + speed
+  String _optimizeConfig(String jsonStr) {
     try {
       final Map<String, dynamic> root =
           jsonDecode(jsonStr) as Map<String, dynamic>;
 
-      // ─── پاکسازی Inbounds ───
+      // ═══════════════════════════════════════════════════
+      // ۱. پاکسازی Inbounds
+      // ═══════════════════════════════════════════════════
       final inbounds = root['inbounds'];
       if (inbounds is List) {
         for (final ib in inbounds) {
           if (ib is Map<String, dynamic>) {
-            _fixStreamSettings(ib['streamSettings'], isInbound: true);
+            _fixStreamSettings(ib['streamSettings']);
+            // ⭐ Sniffing بهتر برای route سریع
+            if (ib['sniffing'] is Map) {
+              final sn = ib['sniffing'] as Map<String, dynamic>;
+              sn['enabled'] = true;
+              sn['destOverride'] = ['http', 'tls', 'quic', 'fakedns'];
+              sn['routeOnly'] = false;
+              sn['metadataOnly'] = false;
+            }
           }
         }
       }
 
-      // ─── پاکسازی Outbounds ───
+      // ═══════════════════════════════════════════════════
+      // ۲. پاکسازی و بهینه‌سازی Outbounds
+      // ═══════════════════════════════════════════════════
       final outbounds = root['outbounds'];
       if (outbounds is List) {
         for (final ob in outbounds) {
-          if (ob is Map<String, dynamic>) {
-            _fixStreamSettings(ob['streamSettings'], isInbound: false);
+          if (ob is! Map<String, dynamic>) continue;
+
+          _fixStreamSettings(ob['streamSettings']);
+
+          final protocol = ob['protocol'];
+          // ⭐ فقط برای proxy (نه direct/blackhole) sockopt اضافه کن
+          if (protocol != 'freedom' && protocol != 'blackhole') {
+            final ss = ob['streamSettings'];
+            if (ss is Map<String, dynamic>) {
+              // ⭐ TCP Fast Open + No Delay + BBR
+              ss['sockopt'] = {
+                'tcpFastOpen': true,
+                'tcpNoDelay': true,
+                'tcpKeepAliveInterval': 15,
+                'tcpCongestion': 'bbr',
+                'mark': 0,
+              };
+            }
           }
         }
       }
+
+      // ═══════════════════════════════════════════════════
+      // ۳. DNS بهینه — سرعت باز شدن سایت‌ها رو زیاد می‌کنه
+      // ═══════════════════════════════════════════════════
+      root['dns'] = {
+        'hosts': {
+          'domain:googleapis.cn': 'googleapis.com',
+          'dns.google': ['8.8.8.8', '8.8.4.4'],
+          'cloudflare.com': ['1.1.1.1', '1.0.0.1'],
+        },
+        'servers': [
+          // ⭐ Cloudflare اول (سریع‌ترین)
+          {
+            'address': '1.1.1.1',
+            'skipFallback': false,
+            'domains': [],
+          },
+          // ⭐ Google دوم
+          {
+            'address': '8.8.8.8',
+            'skipFallback': false,
+            'domains': [],
+          },
+          // ⭐ Quad9 سوم
+          {
+            'address': '9.9.9.9',
+            'skipFallback': true,
+          },
+          // ⭐ DNS محلی برای دامنه‌های ایران
+          {
+            'address': 'localhost',
+            'domains': ['domain:ir', 'geosite:category-ir'],
+          },
+        ],
+        'queryStrategy': 'UseIPv4', // ⭐ IPv4 سریع‌تر از IPv6
+        'disableCache': false,
+        'disableFallback': false,
+        'disableFallbackIfMatch': false,
+        'tag': 'dns_inbound',
+      };
+
+      // ═══════════════════════════════════════════════════
+      // ۴. Routing بهینه
+      // ═══════════════════════════════════════════════════
+      root['routing'] = {
+        'domainStrategy': 'IPIfNonMatch',
+        'domainMatcher': 'hybrid',
+        'rules': [
+          // ⭐ DNS مستقیم (سریع)
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'port': '53',
+          },
+          // ⭐ ترافیک محلی مستقیم
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'ip': ['geoip:private', 'geoip:ir'],
+          },
+          // ⭐ دامنه‌های ایران مستقیم (اینستا ایرانی سریع)
+          {
+            'type': 'field',
+            'outboundTag': 'direct',
+            'domain': ['geosite:category-ir', 'geosite:private'],
+          },
+          // ⭐ SNI sniffing برای بقیه
+          {
+            'type': 'field',
+            'inboundTag': ['tun-in', 'socks-inbound'],
+            'outboundTag': 'proxy',
+          },
+        ],
+      };
+
+      // ═══════════════════════════════════════════════════
+      // ۵. Log level کم (کمتر CPU = سرعت بیشتر)
+      // ═══════════════════════════════════════════════════
+      root['log'] = {'loglevel': 'warning'};
 
       return jsonEncode(root);
     } catch (_) {
@@ -145,10 +248,11 @@ class VpnService {
     }
   }
 
-  void _fixStreamSettings(dynamic streamSettings, {required bool isInbound}) {
+  /// پاکسازی streamSettings
+  void _fixStreamSettings(dynamic streamSettings) {
     if (streamSettings is! Map<String, dynamic>) return;
 
-    // ─── Reality Settings ───
+    // Reality
     final rs = streamSettings['realitySettings'];
     if (rs is Map<String, dynamic>) {
       if (rs['spiderX'] == null) rs['spiderX'] = '';
@@ -161,7 +265,7 @@ class VpnService {
       if (rs['show'] == null) rs['show'] = false;
     }
 
-    // ─── TLS Settings ───
+    // TLS
     final ts = streamSettings['tlsSettings'];
     if (ts is Map<String, dynamic>) {
       if (ts['serverName'] == null) ts['serverName'] = '';
@@ -171,33 +275,27 @@ class VpnService {
       if (ts['allowInsecure'] == null) ts['allowInsecure'] = false;
     }
 
-    // ─── WS Settings ───
+    // WS
     final ws = streamSettings['wsSettings'];
     if (ws is Map<String, dynamic>) {
       if (ws['path'] == null || ws['path'] == '') ws['path'] = '/';
       if (ws['headers'] == null) ws['headers'] = <String, String>{};
     }
 
-    // ─── gRPC Settings ───
+    // gRPC
     final gs = streamSettings['grpcSettings'];
     if (gs is Map<String, dynamic>) {
       if (gs['serviceName'] == null) gs['serviceName'] = '';
     }
 
-    // ─── HTTP Settings ───
-    final hs = streamSettings['httpSettings'];
-    if (hs is Map<String, dynamic>) {
-      if (hs['path'] == null || hs['path'] == '') hs['path'] = '/';
-    }
-
-    // ─── XHTTP Settings ───
+    // XHTTP
     final xs = streamSettings['xhttpSettings'];
     if (xs is Map<String, dynamic>) {
       if (xs['path'] == null || xs['path'] == '') xs['path'] = '/';
       if (xs['mode'] == null) xs['mode'] = 'auto';
     }
 
-    // ─── network پیش‌فرض ───
+    // network default
     if (streamSettings['network'] == null ||
         streamSettings['network'] == '') {
       streamSettings['network'] = 'tcp';
@@ -218,25 +316,18 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ۱. پاکسازی URI
       final cleanUri = _sanitizeUri(config.rawUri);
-
-      // ۲. پارس به URL object
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-
-      // ۳. تبدیل به JSON
       String jsonConfig = parsedUrl.getFullConfiguration();
 
-      // ⭐ ۴. پاکسازی JSON — null رو با مقادیر معتبر جایگزین می‌کنه
-      jsonConfig = _fixJsonConfig(jsonConfig);
-      await _logs.add(LogLevel.info, 'Config fixed ✅');
+      // ⭐ بهینه‌سازی کامل (null fix + speed boost)
+      jsonConfig = _optimizeConfig(jsonConfig);
+      await _logs.add(LogLevel.info, 'Config optimized ⚡');
 
-      // ۵. مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ۶. شروع تونل
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
@@ -247,7 +338,7 @@ class VpnService {
       _status = VpnStatus.connected;
       _statusCtrl.add(_status);
       _startTimer();
-      await _logs.add(LogLevel.success, '✅ Connected');
+      await _logs.add(LogLevel.success, '✅ Connected (optimized)');
       return true;
     } catch (e) {
       _lastError = e.toString().replaceFirst('Exception: ', '');
