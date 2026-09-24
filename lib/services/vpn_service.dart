@@ -75,7 +75,6 @@ class VpnService {
     }
   }
 
-  /// پاکسازی URI — فقط `security=none` حذف
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -85,8 +84,8 @@ class VpnService {
       final qIndex = mainPart.indexOf('?');
       if (qIndex < 0) return uri;
 
-      String basePart = mainPart.substring(0, qIndex);
-      String queryPart = mainPart.substring(qIndex + 1);
+      final basePart = mainPart.substring(0, qIndex);
+      final queryPart = mainPart.substring(qIndex + 1);
 
       final newParams = <String>[];
       for (final pair in queryPart.split('&')) {
@@ -126,27 +125,21 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ۱. پاکسازی حداقلی
       final cleanUri = _sanitizeUri(config.rawUri);
-
-      // ۲. پارس
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
       final String jsonConfig = parsedUrl.getFullConfiguration();
-      await _logs.add(LogLevel.info, 'Parsed config OK');
 
-      // ⭐ مهم: config رو دست نزن! بذار flutter_vless خودش مدیریت کنه
-      // این تنها راهیه که TUN و tun2socks به هم وصل می‌شن
-
-      // ۳. مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ۴. شروع
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
         proxyOnly: false,
+        // ⭐⭐ تنظیمات حیاتی برای رد شدن ترافیک
+        bypassSubnets: const ['0.0.0.0/0', '::/0'],
+        androidDnsPolicy: AndroidDnsPolicy.proxy,
       );
 
       _status = VpnStatus.connected;
