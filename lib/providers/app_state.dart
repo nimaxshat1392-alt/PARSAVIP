@@ -25,7 +25,6 @@ class AppState extends ChangeNotifier {
   VpnConfig? get activeConfig => vpn.current;
 
   Future<void> init() async {
-    // بارگذاری کانفیگ‌ها
     configs = await storage.loadConfigs();
 
     if (configs.isEmpty) {
@@ -43,7 +42,6 @@ class AppState extends ChangeNotifier {
       configs = parsed;
       await storage.saveConfigs(configs);
     } else {
-      // فیلتر کانفیگ‌های نامعتبر
       final beforeCount = configs.length;
       configs = configs.where((c) => ConfigParser.isValidConfig(c)).toList();
       if (beforeCount != configs.length) {
@@ -51,7 +49,6 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    // انتخاب فعلی
     final selId = await storage.loadSelectedId();
     if (selId != null) {
       selected = configs.firstWhere(
@@ -66,7 +63,6 @@ class AppState extends ChangeNotifier {
     loading = false;
     notifyListeners();
 
-    // لاگ‌ها
     await logs.init();
     await logs.add(LogLevel.info, 'App started');
     await logs.add(
@@ -74,7 +70,6 @@ class AppState extends ChangeNotifier {
       'Loaded ${configs.length} valid configs',
     );
 
-    // راه‌اندازی VPN
     await vpn.initialize();
     vpn.statusStream.listen((_) => notifyListeners());
   }
@@ -89,7 +84,7 @@ class AppState extends ChangeNotifier {
       );
 
   // ═══════════════════════════════════════════════
-  // Ping
+  // Ping — با PingProgress جدید
   // ═══════════════════════════════════════════════
   Future<void> pingAll() async {
     if (pinging) return;
@@ -104,21 +99,22 @@ class AppState extends ChangeNotifier {
       configs = await ping.PingService.pingAll(
         configs,
         concurrency: 4,
-        onProgress: (done, total) {
-          pingProgress = total == 0 ? 0 : done / total;
+        onProgress: (p) {
+          pingProgress = p.percent;
           notifyListeners();
         },
       );
 
       await storage.saveConfigs(configs);
 
-      final online = configs
-          .where((c) => (c.ping ?? 9999) < 9999)
-          .length;
+      final stats = ping.PingService.getGlobalStats();
+      final online = stats['successCount'] ?? 0;
+      final offline = stats['failureCount'] ?? 0;
+      final avgPing = stats['avgPing'] ?? 0;
 
       await logs.add(
         LogLevel.success,
-        'Ping complete: $online online, ${configs.length - online} offline',
+        'Ping complete: $online online, $offline offline, avg=${avgPing}ms',
       );
     } catch (e) {
       await logs.add(LogLevel.error, 'Ping failed: $e');
@@ -257,9 +253,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ═══════════════════════════════════════════════
-  // Lifecycle
-  // ═══════════════════════════════════════════════
   @override
   void dispose() {
     vpn.dispose();
