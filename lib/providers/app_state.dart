@@ -84,7 +84,7 @@ class AppState extends ChangeNotifier {
       );
 
   // ═══════════════════════════════════════════════
-  // Ping — با PingProgress جدید
+  // Ping — هماهنگ با ping_service.dart فعلی
   // ═══════════════════════════════════════════════
   Future<void> pingAll() async {
     if (pinging) return;
@@ -99,18 +99,28 @@ class AppState extends ChangeNotifier {
       configs = await ping.PingService.pingAll(
         configs,
         concurrency: 4,
-        onProgress: (p) {
-          pingProgress = p.percent;
+        onProgress: (done, total) {
+          pingProgress = total == 0 ? 0 : done / total;
           notifyListeners();
         },
       );
 
       await storage.saveConfigs(configs);
 
-      final stats = ping.PingService.getGlobalStats();
-      final online = stats['successCount'] ?? 0;
-      final offline = stats['failureCount'] ?? 0;
-      final avgPing = stats['avgPing'] ?? 0;
+      // ⭐ آمار محلی (چون getGlobalStats وجود نداره)
+      final online = configs
+          .where((c) => (c.ping ?? 9999) < 9999)
+          .length;
+      final offline = configs.length - online;
+
+      // ⭐ میانگین پینگ سرورهای آنلاین
+      final onlinePings = configs
+          .where((c) => (c.ping ?? 9999) < 9999)
+          .map((c) => c.ping!)
+          .toList();
+      final avgPing = onlinePings.isEmpty
+          ? 0
+          : onlinePings.reduce((a, b) => a + b) ~/ onlinePings.length;
 
       await logs.add(
         LogLevel.success,
