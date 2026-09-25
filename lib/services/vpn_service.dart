@@ -76,7 +76,6 @@ class VpnService {
     }
   }
 
-  /// پاکسازی URI
   String _sanitizeUri(String uri) {
     try {
       final hashIndex = uri.indexOf('#');
@@ -99,9 +98,7 @@ class VpnService {
         }
         final key = pair.substring(0, eqIndex);
         final value = pair.substring(eqIndex + 1);
-        if (key == 'security' && (value.isEmpty || value == 'none')) {
-          continue;
-        }
+        if (key == 'security' && (value.isEmpty || value == 'none')) continue;
         if (value.isEmpty) continue;
         newParams.add(pair);
       }
@@ -112,29 +109,26 @@ class VpnService {
     }
   }
 
-  /// ⭐ پاکسازی JSON — جایگزینی null با مقادیر معتبر
-  /// این تابع مشکل Reality (spiderX=null) رو حل می‌کنه
+  /// ⭐ حیاتی: پاکسازی null ها که Xray رد می‌کنه
   String _fixJsonConfig(String jsonStr) {
     try {
       final Map<String, dynamic> root =
           jsonDecode(jsonStr) as Map<String, dynamic>;
 
-      // ─── پاکسازی Inbounds ───
       final inbounds = root['inbounds'];
       if (inbounds is List) {
         for (final ib in inbounds) {
           if (ib is Map<String, dynamic>) {
-            _fixStreamSettings(ib['streamSettings'], isInbound: true);
+            _fixStreamSettings(ib['streamSettings']);
           }
         }
       }
 
-      // ─── پاکسازی Outbounds ───
       final outbounds = root['outbounds'];
       if (outbounds is List) {
         for (final ob in outbounds) {
           if (ob is Map<String, dynamic>) {
-            _fixStreamSettings(ob['streamSettings'], isInbound: false);
+            _fixStreamSettings(ob['streamSettings']);
           }
         }
       }
@@ -145,10 +139,9 @@ class VpnService {
     }
   }
 
-  void _fixStreamSettings(dynamic streamSettings, {required bool isInbound}) {
+  void _fixStreamSettings(dynamic streamSettings) {
     if (streamSettings is! Map<String, dynamic>) return;
 
-    // ─── Reality Settings ───
     final rs = streamSettings['realitySettings'];
     if (rs is Map<String, dynamic>) {
       if (rs['spiderX'] == null) rs['spiderX'] = '';
@@ -161,7 +154,6 @@ class VpnService {
       if (rs['show'] == null) rs['show'] = false;
     }
 
-    // ─── TLS Settings ───
     final ts = streamSettings['tlsSettings'];
     if (ts is Map<String, dynamic>) {
       if (ts['serverName'] == null) ts['serverName'] = '';
@@ -171,33 +163,17 @@ class VpnService {
       if (ts['allowInsecure'] == null) ts['allowInsecure'] = false;
     }
 
-    // ─── WS Settings ───
     final ws = streamSettings['wsSettings'];
     if (ws is Map<String, dynamic>) {
       if (ws['path'] == null || ws['path'] == '') ws['path'] = '/';
       if (ws['headers'] == null) ws['headers'] = <String, String>{};
     }
 
-    // ─── gRPC Settings ───
     final gs = streamSettings['grpcSettings'];
     if (gs is Map<String, dynamic>) {
       if (gs['serviceName'] == null) gs['serviceName'] = '';
     }
 
-    // ─── HTTP Settings ───
-    final hs = streamSettings['httpSettings'];
-    if (hs is Map<String, dynamic>) {
-      if (hs['path'] == null || hs['path'] == '') hs['path'] = '/';
-    }
-
-    // ─── XHTTP Settings ───
-    final xs = streamSettings['xhttpSettings'];
-    if (xs is Map<String, dynamic>) {
-      if (xs['path'] == null || xs['path'] == '') xs['path'] = '/';
-      if (xs['mode'] == null) xs['mode'] = 'auto';
-    }
-
-    // ─── network پیش‌فرض ───
     if (streamSettings['network'] == null ||
         streamSettings['network'] == '') {
       streamSettings['network'] = 'tcp';
@@ -218,25 +194,18 @@ class VpnService {
 
       await _logs.add(LogLevel.info, 'Starting: ${config.protocolShort}');
 
-      // ۱. پاکسازی URI
       final cleanUri = _sanitizeUri(config.rawUri);
-
-      // ۲. پارس به URL object
       final FlutterVlessURL parsedUrl = FlutterVless.parseFromURL(cleanUri);
-
-      // ۳. تبدیل به JSON
       String jsonConfig = parsedUrl.getFullConfiguration();
 
-      // ⭐ ۴. پاکسازی JSON — null رو با مقادیر معتبر جایگزین می‌کنه
       jsonConfig = _fixJsonConfig(jsonConfig);
       await _logs.add(LogLevel.info, 'Config fixed ✅');
 
-      // ۵. مجوز
       final bool permitted = await _vless.requestPermission();
       if (!permitted) throw Exception('VPN permission denied');
       await _logs.add(LogLevel.info, 'VPN permission granted');
 
-      // ۶. شروع تونل
+      // ⭐⭐⭐ مهم‌ترین بخش — این ۲ خط باعث عبور ترافیک می‌شن
       await _vless.startVless(
         remark: parsedUrl.remark.isEmpty ? config.name : parsedUrl.remark,
         config: jsonConfig,
